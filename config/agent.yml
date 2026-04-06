@@ -1,0 +1,76 @@
+# ============================================
+# Agent智能体配置
+# ============================================
+
+# Agent类型配置
+agent_types:
+  # 基础诊断Agent
+  diagnostic:
+    name: "HDFS诊断专家"
+    description: "专门负责HDFS日志异常诊断的Agent"
+    reasoning_type: "react"  # react, chain_of_thought
+
+    # 推理参数
+    reasoning:
+      max_iterations: 5
+      enable_self_reflection: true
+      enable_tool_use: true
+
+    # 工具配置
+    tools:
+      - "rag_retrieval"
+      - "log_analysis"
+      - "system_check"
+
+# 工作流配置
+workflow:
+  # 异常检测流程
+  anomaly_detection:
+    steps:
+      - "mlp_prediction"
+      - "threshold_check"
+      - "log_aggregation"
+      - "rag_retrieval"
+      - "llm_diagnosis"
+      - "report_generation"
+
+    # 超时设置
+    timeout: 300  # 5分钟
+
+  # 诊断流程
+  diagnosis:
+    # 诊断深度
+    depth: "detailed"  # quick, standard, detailed
+
+    # 输出格式
+    output:
+      format: "structured"  # structured, free_text
+      include_reasoning: true
+      include_confidence: true
+
+# 工具配置
+tools:
+  # RAG检索工具
+  rag_retrieval:
+    enabled: true
+    config_file: "config/rag.yml"
+
+    # 检索参数
+    parameters:
+      top_k: 3
+      similarity_threshold: 0.7
+
+  # 日志分析工具
+  log_analysis:
+    enabled: true
+    parameters:
+      max_log_lines: 100
+      enable_pattern_matching: true
+
+  # 系统检查工具
+  system_check:
+    enabled: false
+    parameters:
+      check_disk: true
+      check_memory: true
+      check_network: true

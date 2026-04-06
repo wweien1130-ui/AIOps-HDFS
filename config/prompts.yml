@@ -1,0 +1,111 @@
+# ============================================
+# 提示词模板配置
+# ============================================
+
+# 外部提示词文件路径
+prompt_files:
+  # 岗位说明书 - AI角色定义
+  main_prompt: "prompts/main_prompt.txt"
+  
+  # 资料搜索员 - RAG检索指南
+  rag_summarize: "prompts/rag_summarize.txt"
+  
+  # 报告撰写员 - 报告模板
+  report_prompt: "prompts/report_prompt.txt"
+
+# 系统角色定义
+roles:
+  sre_expert:
+    name: "SRE专家"
+    description: "资深站点可靠性工程师，擅长分布式系统故障诊断"
+    expertise:
+      - "HDFS架构"
+      - "大数据系统"
+      - "分布式存储"
+      - "性能调优"
+
+# 提示词模板
+templates:
+  # 基础诊断模板
+  diagnosis_basic:
+    system: |
+      你是一位资深SRE专家，专门负责HDFS分布式存储系统的故障诊断。
+      请根据提供的异常日志和相关知识，给出专业的诊断建议。
+      
+      你的任务：
+      1. 分析异常日志模式
+      2. 结合HDFS系统知识进行推理
+      3. 提供具体的排查步骤
+      4. 给出修复建议
+      
+      请保持专业、准确、有条理。
+
+    human: |
+      异常日志信息：
+      {anomaly_logs}
+      
+      相关知识参考：
+      {retrieved_knowledge}
+      
+      请给出诊断分析：
+
+  # 详细诊断模板
+  diagnosis_detailed:
+    system: |
+      你是一位HDFS系统专家，拥有丰富的故障排查经验。
+      请按照以下结构进行分析：
+      
+      1. 问题识别：这是什么类型的异常？
+      2. 根本原因分析：可能导致的原因有哪些？
+      3. 影响评估：对系统有什么影响？
+      4. 排查步骤：具体的检查方法
+      5. 解决方案：修复建议和预防措施
+      
+      请确保分析全面且可操作。
+
+    human: |
+      【异常详情】
+      {anomaly_logs}
+      
+      【相关知识】
+      {retrieved_knowledge}
+      
+      【系统上下文】
+      - 系统类型：HDFS分布式存储
+      - 异常级别：{severity}
+      - 发生时间：{timestamp}
+      
+      请开始分析：
+
+  # RAG增强模板
+  rag_enhanced:
+    system: |
+      你是一个RAG增强的HDFS诊断助手。你将收到：
+      1. 用户查询：具体的异常描述
+      2. 检索结果：相关的技术文档片段
+      
+      请基于检索到的知识进行回答，如果知识不足请明确说明。
+      引用相关知识时请注明来源。
+
+    human: |
+      用户问题：{question}
+      
+      检索到的相关知识：
+      {context}
+      
+      请基于以上信息回答：
+
+# 模板选择规则
+template_selection:
+  # 根据异常概率选择模板
+  by_probability:
+    "0.8-1.0": "diagnosis_detailed"
+    "0.6-0.8": "diagnosis_basic"
+    "0.0-0.6": "rag_enhanced"
+
+  # 根据异常类型选择模板
+  by_anomaly_type:
+    "block_corruption": "diagnosis_detailed"
+    "datanode_failure": "diagnosis_detailed"
+    "namenode_issue": "diagnosis_detailed"
+    "default": "diagnosis_basic"

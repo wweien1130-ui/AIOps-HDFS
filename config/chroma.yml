@@ -1,0 +1,73 @@
+# ============================================
+# ChromaDB向量数据库配置
+# ============================================
+
+# 数据库设置
+database:
+  # 持久化路径
+  persist_directory: "vector_store"
+
+  # 集合名称
+  collection_name: "hdfs_knowledge"
+
+  # 客户端设置
+  client_settings:
+    # 是否启用匿名遥测
+    anonymized_telemetry: false
+
+    # 是否自动重置（开发用）
+    auto_reset: false
+
+# 嵌入配置
+embedding:
+  # 嵌入模型
+  model_name: "sentence-transformers/all-MiniLM-L6-v2"
+
+  # 模型参数
+  model_kwargs:
+    device: "cpu"
+
+  # 编码参数
+  encode_kwargs:
+    normalize_embeddings: true
+
+# 集合配置
+collection:
+  # 距离度量方式
+  distance_metric: "cosine"  # cosine, l2, ip
+
+  # 元数据配置
+  metadata:
+    # 是否启用元数据过滤
+    enable_metadata_filtering: true
+
+    # 默认元数据字段
+    default_fields:
+      - "source"
+      - "document_type"
+      - "section"
+      - "created_at"
+
+# 性能配置
+performance:
+  # 批量操作大小
+  batch_size: 200
+  # 批量操作重叠
+  # 用于在批量操作时，每个批次之间的重叠数量
+  batch_overlap: 20
+  # 文本分割符
+  # 用于将文档分割成更小的段落
+  separators: ["\n\n", "\n", ".", "!", "?", "。", "！", "？", "{", "}"]
+  # 检索结果数量
+  k : 3
+  # md5_hex存储路径
+  md5_hex_store: md5.text
+
+  data_path: "hdfs_knowledge"
+
+  allow_knowledge_file_type: ["txt","pdf"]
+
+  # 缓存设置
+  cache:
+    enabled: true
+    max_size: 1000

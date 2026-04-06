@@ -1,0 +1,47 @@
+# ============================================
+# HDFS日志异常检测系统 - 基础配置
+# ============================================
+
+# 项目基本信息
+project:
+  name: "hdfs-anomaly-detection"
+  version: "1.0.0"
+  description: "基于MLP和LLM Agent的HDFS日志异常检测系统"
+
+# 路径配置
+paths:
+  # 数据路径
+  data_dir: "HDFS_v1"
+  preprocessed_dir: "HDFS_v1/preprocessed"
+
+  # 模型路径
+  model_dir: "."
+  model_path: "LogMLP_Model.pth"
+  scaler_path: "scaler.pkl"
+
+  # 知识库路径
+  knowledge_dir: "knowledge"
+  vector_store_dir: "vector_store"
+
+  # 日志路径
+  log_dir: "logs"
+  diagnostics_dir: "diagnostics"
+
+# 模型配置
+mlp:
+  # 预测阈值（大于此值判定为异常）
+  anomaly_threshold: 0.8
+
+  # 输入特征维度（自动检测）
+  input_dim: "auto"
+
+# 系统配置
+system:
+  # 日志级别
+  log_level: "INFO"
+
+  # 是否启用调试模式
+  debug: false
+
+  # 最大并发数
+  max_workers: 4

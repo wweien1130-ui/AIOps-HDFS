@@ -1,0 +1,56 @@
+# ============================================
+# RAG检索配置
+# ============================================
+
+# 向量存储配置
+vector_store:
+  # 存储类型
+  type: "chroma"  # chroma, faiss
+
+  # 存储路径
+  persist_directory: "vector_store"
+
+  # 集合名称
+  collection_name: "hdfs_knowledge"
+
+  #聊天模型
+  chat_model : "qwen3-max"
+
+  # 嵌入模型
+  embedding:
+    model: "text-embedding-v4"
+    device: "cpu"
+
+# 文档处理配置
+document_processing:
+  # 分块策略
+  chunking:
+    chunk_size: 500
+    chunk_overlap: 50
+    separator: "\n\n"
+
+  # 文本清理
+  cleaning:
+    remove_extra_whitespace: true
+    remove_special_chars: false
+
+  # 元数据提取
+  metadata:
+    extract_title: true
+    extract_section: true
+
+# 检索配置
+retrieval:
+  # 检索策略
+  strategy: "similarity"  # similarity, mmr, similarity_score_threshold
+
+  # 检索参数
+  parameters:
+    top_k: 5
+    similarity_threshold: 0.7
+    fetch_k: 20  # MMR参数
+
+  # 重排序（可选）
+  reranker:
+    enabled: false
+    model: "BAAI/bge-reranker-large"
