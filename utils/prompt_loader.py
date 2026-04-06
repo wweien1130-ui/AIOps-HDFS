@@ -8,16 +8,16 @@ def load_system_prompts():
         system_prompt_path = get_abs_path(prompts_config["prompt_files"]["main_prompt"])
     except KeyError as e:
         logger.error(f"[load_system_prompts] 在yaml配置中缺少main_prompt路径: {e}")
-        return None
+        return "你是一位HDFS诊断专家。"
 
     try:
         with open(system_prompt_path,"r",encoding="utf-8") as f:
             content = f.read()
         logger.info(f"[load_system_prompts] 成成功加载岗位说明书提示词: {system_prompt_path}")
-        return content
+        return content if content else "你是一位HDFS诊断专家。"
     except FileNotFoundError as e:
         logger.error(f"[load_system_prompts] 提示词文件不存在: {system_prompt_path}")
-        return None
+        return "你是一位HDFS诊断专家。"
 
 
 def load_rag_prompts():

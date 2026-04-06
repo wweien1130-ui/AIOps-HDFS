@@ -13,3 +13,51 @@ AI_application/
 │   └── hdfs_faq.md      # HDFS故障排查手册
 ├── .env                 # 环境变量（API密钥等）
 └── Agent_System.py      # 主入口（你的现有文件）
+
+
+
+
+Agent 测试用例
+根据你的 Agent 功能，以下是测试例子：
+
+📚 知识库检索（rag_retrieve）
+测试问题	预期调用的工具
+"blk_12345 not found 错误怎么解决"	rag_retrieve
+"E1 错误是什么意思？"	rag_retrieve
+"DataNode 心跳超时如何处理？"	rag_retrieve
+"HDFS 块副本不足怎么解决？"	rag_retrieve
+🤖 MLP 异常检测
+测试问题	预期调用的工具
+"帮我训练异常检测模型"	train_mlp_model
+"训练一个 MLP 模型"	train_mlp_model
+"检测日志有没有异常"	detect_anomaly
+"分析 HDFS 日志中的异常块"	detect_anomaly
+🔧 预处理日志
+测试问题	预期调用的工具
+"预处理 HDFS 日志"	preprocess_hdfs_logs
+"生成事件矩阵"	preprocess_hdfs_logs
+🧮 其他工具
+测试问题	预期调用的工具
+"现在几点？"	get_current_time
+"计算 123*456"	calculate
+💡 推荐测试流程
+先测试知识库检索：
+
+
+plainText
+blk_12345 not found 错误怎么解决
+测试模型训练（如果已有 Event_occurrence_matrix.csv）：
+
+
+plainText
+训练异常检测模型
+测试异常检测（训练完后）：
+
+
+plainText
+检测是否有异常
+组合测试：
+
+
+plainText
+先训练模型，然后检测异常
