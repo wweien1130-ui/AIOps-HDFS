@@ -37,9 +37,11 @@ def log_before_model(
         state: AgentState,
         runtime: Runtime,
 ):
-    logger.info(f"[log_before_model]即将调用模型，带有{len(state.messages)}个消息")
-    logger.debug(f"[log_before_model]{type(state.messages[-1]).__name__} | {state.messages[-1].content.strip()}")
-
+    # state是字典类型，需要用state["messages"]访问
+    messages = state.get("messages", [])
+    logger.info(f"[log_before_model]即将调用模型，带有{len(messages)}个消息")
+    if messages:
+        logger.debug(f"[log_before_model]{type(messages[-1]).__name__} | {messages[-1].content.strip()}")
     return None
 
 

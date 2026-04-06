@@ -1,0 +1,277 @@
+# HDFS常见问题FAQ
+
+## DataNode相关问题
+
+### Q1: DataNode无法启动怎么办？
+**问题描述**: DataNode进程无法启动或启动后立即退出
+
+**可能原因**:
+1. 配置文件错误
+2. 磁盘空间不足
+3. 权限问题
+4. NameNode连接失败
+5. 元数据损坏
+
+**解决方案**:
+1. 检查日志文件 `hadoop-hadoop-datanode-*.log`
+2. 确认 `dfs.datanode.data.dir` 目录权限正确
+3. 检查磁盘空间：`df -h`
+4. 验证NameNode是否正常运行
+5. 确认防火墙没有阻止通信
+
+**检查命令**:
+```bash
+# 查看DataNode日志
+tail -f $HADOOP_HOME/logs/hadoop-hadoop-datanode-*.log
+
+# 检查DataNode状态
+hdfs dfsadmin -report
+
+# 检查磁盘空间
+df -h
+```
+
+---
+
+### Q2: DataNode磁盘满了怎么办？
+**问题描述**: DataNode报告磁盘空间不足
+
+**解决方案**:
+1. 清理旧日志文件
+2. 删除不需要的临时文件
+3. 增加新磁盘并配置存储
+4. 调整 `dfs.datanode.du.reserved` 参数预留空间
+
+**检查命令**:
+```bash
+# 查看各节点磁盘使用情况
+hdfs dfsadmin -report
+
+# 查看具体目录大小
+hdfs dfs -du -h /path
+```
+
+---
+
+### Q3: DataNode心跳超时怎么处理？
+**问题描述**: NameNode日志显示 "DataNode not received"
+
+**可能原因**:
+1. 网络延迟或中断
+2. DataNode负载过高
+3. GC暂停导致超时
+4. 网络配置问题
+
+**解决方案**:
+1. 检查网络连通性：`ping <datanode_ip>`
+2. 调整 `dfs.heartbeat.interval` 参数
+3. 调整 `dfs.namenode.heartbeat.recheck-interval` 参数
+4. 检查DataNode负载情况
+
+---
+
+## NameNode相关问题
+
+### Q4: NameNode无法启动怎么办？
+**问题描述**: NameNode启动失败
+
+**可能原因**:
+1. 格式化问题 - 多次格式化导致ID不一致
+2. 元数据目录权限问题
+3. editLog损坏
+4. 端口被占用
+
+**解决方案**:
+1. 首次启动前确保已正确格式化：`hdfs namenode -format`
+2. 检查元数据目录权限
+3. 如果有备份，使用 `hdfs namenode -importCheckpoint` 恢复
+4. 检查端口占用：`netstat -tlnp | grep 9000`
+
+**紧急恢复**:
+```bash
+# 使用备份恢复
+hdfs namenode -importCheckpoint
+```
+
+---
+
+### Q5: NameNode进入安全模式怎么办？
+**问题描述**: 系统提示 "NameNode in safe mode"
+
+**原因说明**: 这是正常保护机制，当副本数不足时自动进入
+
+**解决方案**:
+```bash
+# 退出安全模式
+hdfs dfsadmin -safemode leave
+
+# 查看安全模式状态
+hdfs dfsadmin -safemode get
+
+# 等待自动退出（当块修复后）
+# 手动强制退出（慎用）
+hdfs dfsadmin -safemode forceExit
+```
+
+---
+
+## Block块相关问题
+
+### Q6: Block副本不足怎么办？
+**问题描述**: 某些Block的副本数少于配置的副本数
+
+**解决方案**:
+```bash
+# 手动触发块修复
+hdfs balancer
+
+# 检查块状态
+hdfs fsck / -files -blocks -locations
+
+# 查看副本不足的块
+hdfs fsck / - racks / | grep "Missing replicas"
+```
+
+---
+
+### Q7: Block损坏如何处理？
+**问题描述**: 读取文件时提示 "Block is corrupt"
+
+**解决方案**:
+1. 检查损坏的块：`hdfs fsck /path/to/file -files -blocks`
+2. 删除损坏的块副本
+3. 系统会自动从其他副本恢复
+
+```bash
+# 强制删除损坏的副本
+hdfs fsck /path/to/file -delete
+```
+
+---
+
+## 权限和安全问题
+
+### Q8: 权限拒绝错误怎么办？
+**问题描述**: Permission denied错误
+
+**解决方案**:
+```bash
+# 修改文件权限
+hdfs dfs -chmod 755 /path/to/file
+
+# 修改文件所有者
+hdfs dfs -chown user:group /path/to/file
+
+# 启用代理用户（如果使用oozie/hive等）
+# 在 core-site.xml 中配置
+```
+
+---
+
+### Q9: 如何配置HDFS配额？
+**解决方案**:
+```bash
+# 设置目录空间配额
+hdfs dfsadmin -setQuota 1000000 /user/dir
+
+# 清除配额
+hdfs dfsadmin -clrQuota /user/dir
+
+# 设置文件数量配额
+hdfs dfsadmin -setQuota 10000 /user/dir
+```
+
+---
+
+## 性能优化问题
+
+### Q10: HDFS写入慢怎么办？
+**优化建议**:
+1. 调整块大小：对于大文件，增大块大小
+2. 调整副本数：对于写入密集型场景，减少副本数
+3. 启用短路读取：`dfs.client.read.shortcircuit`
+4. 调整缓冲区大小：`dfs.write.packet.size`
+
+---
+
+### Q11: NameNode内存使用过高怎么办？
+**解决方案**:
+1. 启用 federation：配置多个NameNode
+2. 调整堆大小：`export HADOOP_NAMENODE_OPTS="-Xmx4g"`
+3. 定期合并快照
+4. 清理不必要的文件
+
+---
+
+## 备份和恢复
+
+### Q12: 如何备份NameNode元数据？
+**解决方案**:
+```bash
+# 方法1：使用dfsadmin
+hdfs dfsadmin -safemode enter
+hdfs dfsadmin -saveNamespace
+hdfs dfsadmin -safemode leave
+
+# 方法2：手动备份
+cp -r /path/to/name/dir /backup/location
+
+# 方法3：配置自动备份
+# 在 hdfs-site.xml 中配置
+```
+
+---
+
+### Q13: 如何恢复误删的文件？
+**解决方案**:
+1. 开启垃圾箱功能
+```bash
+# 移动到垃圾箱（默认/tmp）
+hdfs dfs -mv /user/file /trash
+
+# 从垃圾箱恢复
+hdfs dfs -mv /user/$USER/.Trash/Current/file /user/
+
+# 彻底删除（绕过垃圾箱）
+hdfs dfs -rm -skipTrash /file
+```
+
+2. 使用快照恢复（如果已启用）
+```bash
+# 创建快照
+hdfs dfs -mkdir /user/.snapshot
+hdfs dfs -allowSnapshot /user/dir
+hdfs dfs -createSnapshot /user/dir mysnapshot
+
+# 恢复快照
+hdfs dfs -cp /user/dir/.snapshot/mysnapshot/* /user/dir/
+```
+
+---
+
+## 集群管理
+
+### Q14: 如何添加新的DataNode？
+**步骤**:
+1. 在新节点上安装Hadoop
+2. 配置 `workers` 或 `slaves` 文件
+3. 启动DataNode：`hadoop-daemon.sh start datanode`
+4. 运行平衡：`hdfs balancer`
+
+---
+
+### Q15: 如何查看HDFS集群状态？
+**常用命令**:
+```bash
+# 集群整体状态
+hdfs dfsadmin -report
+
+# 查看文件系统健康状态
+hdfs fsck / -files -blocks -locations -racks
+
+# 查看NameNode状态
+hdfs haadmin -getServiceState nn1
+
+# 查看DataNode详细信息
+hdfs dfsadmin -printTopology
+```

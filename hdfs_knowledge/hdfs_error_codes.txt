@@ -1,0 +1,514 @@
+# HDFS错误码对照表
+
+## 事件ID与错误码映射
+
+本表列出HDFS日志中常见的事件ID（EventId）及其对应的含义和处理方法。
+
+---
+
+## E1-E10: Block相关错误
+
+### E1: blk_* not found
+**严重程度**: 高
+
+**错误描述**: Block文件不存在或无法访问
+
+**可能原因**:
+1. Block文件被误删除
+2. 磁盘损坏
+3. DataNode宕机
+4. 路径配置错误
+
+**处理方案**:
+```bash
+# 1. 检查Block状态
+hdfs fsck /path -files -blocks
+
+# 2. 查看具体错误日志
+# 检查DataNode日志中的blk_*信息
+
+# 3. 如果Block确实损坏，删除损坏副本
+hdfs fsck /path -delete
+
+# 4. 触发副本重新复制
+hdfs dfsadmin -refreshNodes
+```
+
+---
+
+### E2: blk_* corrupt
+**严重程度**: 高
+
+**错误描述**: Block数据损坏，校验和不匹配
+
+**可能原因**:
+1. 磁盘硬件故障
+2. 网络传输错误
+3. 内存错误
+4. 文件系统损坏
+
+**处理方案**:
+```bash
+# 1. 检查损坏的Block
+hdfs fsck / -files -blocks | grep CORRUPT
+
+# 2. 删除损坏的Block副本
+hdfs fsck /path -delete
+
+# 3. 系统会自动从其他副本恢复
+# 如果副本数不足，手动触发
+hdfs balancer
+```
+
+---
+
+### E3: insufficient replicas
+**严重程度**: 中
+
+**错误描述**: 副本数不足，低于配置的副本数
+
+**可能原因**:
+1. DataNode下线
+2. 新写入的文件还在复制中
+3. 磁盘空间不足
+
+**处理方案**:
+```bash
+# 1. 查看副本状态
+hdfs fsck /path -files -blocks
+
+# 2. 检查DataNode状态
+hdfs dfsadmin -report
+
+# 3. 触发副本平衡
+hdfs balancer
+
+# 4. 如果是新建文件，等待复制完成
+```
+
+---
+
+### E4: blockReceived
+**严重程度**: 低
+
+**错误描述**: DataNode接收到新的Block
+
+**说明**: 这是正常操作日志，不是错误。表示Block已成功接收并存储。
+
+---
+
+### E5: blockStored
+**严重程度**: 低
+
+**错误描述**: Block已成功存储到DataNode
+
+**说明**: 这是正常操作日志，表示Block存储完成。
+
+---
+
+### E6: Block being written is closed
+**严重程度**: 低
+
+**错误描述**: 正在写入的Block被关闭
+
+**说明**: 正常日志，表示文件写入完成。
+
+---
+
+### E7: Missing blocks
+**严重程度**: 高
+
+**错误描述**: 存在缺失的Block
+
+**处理方案**:
+```bash
+# 1. 查看缺失的Block
+hdfs fsck / -files -blocks -locations | grep "MISSING"
+
+# 2. 检查是否有DataNode下线
+hdfs dfsadmin -report
+
+# 3. 尝试恢复
+hdfs fsck / -files -blocks -locations -rack / | grep "MISSING" | head -10
+```
+
+---
+
+### E8: Under-replicated blocks
+**严重程度**: 中
+
+**错误描述**: 副本数不足的Block
+
+**处理方案**:
+```bash
+# 1. 查看副本不足的Block
+hdfs fsck / | grep "Under replicated"
+
+# 2. 触发自动修复
+hdfs dfsadmin -refreshNodes
+
+# 3. 手动运行均衡器
+hdfs balancer -threshold 10
+```
+
+---
+
+### E9: Invalid block ID
+**严重程度**: 高
+
+**错误描述**: 无效的Block ID
+
+**可能原因**: 元数据损坏或软件bug
+
+**处理方案**:
+```bash
+# 1. 检查NameNode日志
+# 2. 重新启动NameNode
+# 3. 如果无法恢复，可能需要格式化NameNode（最后手段）
+```
+
+---
+
+### E10: Block allocation failed
+**严重程度**: 中
+
+**错误描述**: Block分配失败
+
+**可能原因**:
+1. 磁盘空间不足
+2. DataNode不可用
+
+**处理方案**:
+```bash
+# 1. 检查磁盘空间
+df -h
+
+# 2. 检查DataNode状态
+hdfs dfsadmin -report
+
+# 3. 清理空间或添加新DataNode
+```
+
+---
+
+## E11-E20: DataNode相关错误
+
+### E11: DataNode not started
+**严重程度**: 高
+
+**错误描述**: DataNode未启动
+
+**处理方案**:
+```bash
+# 1. 启动DataNode
+hadoop-daemon.sh start datanode
+
+# 2. 检查日志
+tail -f $HADOOP_HOME/logs/hadoop-hadoop-datanode-*.log
+```
+
+---
+
+### E12: DataNode out of memory
+**严重程度**: 中
+
+**错误描述**: DataNode内存不足
+
+**处理方案**:
+```bash
+# 1. 增加DataNode堆大小
+export HADOOP_DATANODE_OPTS="-Xmx2g"
+
+# 2. 减少Block数量限制
+dfs.datanode.max.xcievers = 4096
+```
+
+---
+
+### E13: DataNode disk failure
+**严重程度**: 高
+
+**错误描述**: DataNode磁盘故障
+
+**处理方案**:
+```bash
+# 1. 检查磁盘健康状态
+smartctl -a /dev/sda
+
+# 2. 将数据迁移到健康磁盘
+# 3. 更换故障磁盘
+```
+
+---
+
+### E14: DataNode heartbeat timeout
+**严重程度**: 高
+
+**错误描述**: DataNode心跳超时
+
+**可能原因**:
+1. 网络问题
+2. DataNode负载过高
+3. GC暂停
+
+**处理方案**:
+```bash
+# 1. 检查网络连通性
+ping <datanode_ip>
+
+# 2. 调整心跳参数
+dfs.heartbeat.interval = 3
+dfs.namenode.heartbeat.recheck-interval = 300000
+```
+
+---
+
+### E15: Too many open files
+**严重程度**: 中
+
+**错误描述**: 打开的文件描述符过多
+
+**处理方案**:
+```bash
+# 1. 检查当前限制
+ulimit -n
+
+# 2. 修改系统限制
+# 在 /etc/security/limits.conf 中添加
+hadoop soft nofile 65535
+hadoop hard nofile 65535
+```
+
+---
+
+### E16: DataNode decommissioning
+**严重程度**: 中
+
+**错误描述**: DataNode正在下线
+
+**说明**: 正常操作日志，表示节点正在安全下线。
+
+---
+
+### E17: Replica not found
+**严重程度**: 高
+
+**错误描述**: 找不到Block副本
+
+**处理方案**:
+```bash
+# 1. 检查Block是否存在
+hdfs fsck /path -files -blocks
+
+# 2. 触发副本重新复制
+hdfs balancer
+```
+
+---
+
+### E18: Wrong version of block
+**严重程度**: 中
+
+**错误描述**: Block版本不匹配
+
+**可能原因**: NameNode和DataNode软件版本不一致
+
+**处理方案**:
+```bash
+# 确保所有节点使用相同版本的Hadoop
+# 重启DataNode
+```
+
+---
+
+## E21-E30: NameNode相关错误
+
+### E21: NameNode is in safe mode
+**严重程度**: 中
+
+**错误描述**: NameNode处于安全模式
+
+**说明**: 当副本数不足时自动进入保护模式
+
+**处理方案**:
+```bash
+# 退出安全模式
+hdfs dfsadmin -safemode leave
+
+# 查看安全模式状态
+hdfs dfsadmin -safemode get
+```
+
+---
+
+### E22: NameNode startup failed
+**严重程度**: 高
+
+**错误描述**: NameNode启动失败
+
+**可能原因**:
+1. 格式化ID不匹配
+2. 元数据损坏
+3. 权限问题
+4. 端口被占用
+
+**处理方案**:
+```bash
+# 1. 检查错误日志
+tail -f $HADOOP_HOME/logs/hadoop-hadoop-namenode-*.log
+
+# 2. 使用检查点恢复
+hdfs namenode -importCheckpoint
+
+# 3. 如果是首次启动，检查是否需要格式化
+hdfs namenode -format
+```
+
+---
+
+### E23: Too many transactions
+**严重程度**: 中
+
+**错误描述**: EditLog事务过多
+
+**处理方案**:
+```bash
+# 1. 触发检查点保存
+hdfs dfsadmin -safemode enter
+hdfs dfsadmin -saveNamespace
+hdfs dfsadmin -safemode leave
+```
+
+---
+
+### E24: FsImage load failed
+**严重程度**: 高
+
+**错误描述**: FsImage加载失败
+
+**可能原因**: 元数据文件损坏
+
+**处理方案**:
+```bash
+# 1. 使用备份恢复
+cp /backup/fsimage_* $HADOOP_HOME/dfs/name/current/
+
+# 2. 使用检查点恢复
+hdfs namenode -importCheckpoint
+```
+
+---
+
+### E25: JournalNode sync failed
+**严重程度**: 高
+
+**错误描述**: JournalNode同步失败（HDFS HA）
+
+**处理方案**:
+```bash
+# 1. 检查JournalNode状态
+hdfs haadmin -getServiceState nn1
+hdfs haadmin -getServiceState nn2
+
+# 2. 重启JournalNode
+hadoop-daemon.sh start journalnode
+```
+
+---
+
+## E26-E30: 网络和连接错误
+
+### E26: Connection refused
+**严重程度**: 中
+
+**错误描述**: 连接被拒绝
+
+**可能原因**:
+1. 服务未启动
+2. 防火墙阻止
+3. 端口配置错误
+
+**处理方案**:
+```bash
+# 1. 检查服务状态
+jps
+
+# 2. 检查端口
+netstat -tlnp | grep 9000
+
+# 3. 检查防火墙
+iptables -L
+```
+
+---
+
+### E27: Operation timeout
+**严重程度**: 中
+
+**错误描述**: 操作超时
+
+**可能原因**:
+1. 网络延迟
+2. DataNode负载过高
+3. GC暂停
+
+**处理方案**:
+```bash
+# 1. 检查网络延迟
+ping <target_ip>
+
+# 2. 调整超时参数
+dfs.client.socket-timeout = 60000
+```
+
+---
+
+### E28: Failed to add stored block
+**严重程度**: 高
+
+**错误描述**: 添加存储Block失败
+
+**处理方案**:
+```bash
+# 1. 检查DataNode磁盘空间
+df -h
+
+# 2. 检查DataNode状态
+hdfs dfsadmin -report
+```
+
+---
+
+### E29: PendingReplication timeout
+**严重程度**: 中
+
+**错误描述**: 副本复制等待超时
+
+**处理方案**:
+```bash
+# 1. 检查目标DataNode状态
+hdfs dfsadmin -report
+
+# 2. 触发重新复制
+hdfs dfsadmin -refreshNodes
+
+# 3. 运行均衡器
+hdfs balancer
+```
+
+---
+
+## 错误码速查表
+
+| 事件ID | 错误类型 | 严重程度 | 快速处理 |
+|--------|----------|----------|----------|
+| E1 | Block不存在 | 高 | 检查 + 删除损坏副本 |
+| E2 | Block损坏 | 高 | 删除 + 自动恢复 |
+| E3 | 副本不足 | 中 | 运行balancer |
+| E7 | Block缺失 | 高 | 检查DataNode状态 |
+| E11 | DataNode未启动 | 高 | 启动DataNode |
+| E14 | 心跳超时 | 高 | 检查网络 |
+| E21 | 安全模式 | 中 | 退出安全模式 |
+| E22 | NameNode启动失败 | 高 | 检查日志 |
+| E26 | 连接拒绝 | 中 | 检查服务 |
+| E28 | 添加Block失败 | 高 | 检查磁盘空间 |

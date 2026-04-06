@@ -1,0 +1,536 @@
+# HDFS故障排查手册
+
+## 快速诊断流程
+
+```
+发现问题
+    ↓
+1. 检查集群状态
+    ├─→ hdfs dfsadmin -report
+    ├─→ hdfs fsck /
+    └─→ jps
+    ↓
+2. 确定问题类型
+    ├─→ NameNode问题
+    ├─→ DataNode问题
+    ├─→ Block问题
+    └─→ 网络问题
+    ↓
+3. 根据问题类型查找对应章节
+    ↓
+4. 执行诊断命令
+    ↓
+5. 应用解决方案
+```
+
+---
+
+## 第一章：集群状态检查
+
+### 1.1 快速健康检查
+
+```bash
+# 查看集群总体状态
+hdfs dfsadmin -report
+
+# 输出示例：
+# Configured Capacity: 100TB
+# DFS Used: 50TB (50%)
+# DFS Remaining: 50TB (50%)
+# Live DataNodes: 10
+# Dead DataNodes: 0
+
+# 如果 Live DataNodes = 0，问题严重！
+
+# 查看文件系统的健康状态
+hdfs fsck / -files -blocks -locations
+
+# 查看NameNode状态
+hdfs haadmin -getServiceState nn1  # 如果配置了HA
+jps | grep NameNode
+```
+
+### 1.2 检查DataNode状态
+
+```bash
+# 查看各节点状态
+hdfs dfsadmin -report
+
+# 输出示例：
+# Live DataNodes: 10
+# Dead DataNodes: 1  ← 有节点宕机！
+
+# 查看节点拓扑
+hdfs dfsadmin -printTopology
+
+# 查看节点磁盘使用
+hdfs dfsadmin -report -heterogeneous
+```
+
+### 1.3 检查NameNode
+
+```bash
+# 查看NameNode日志
+tail -f $HADOOP_HOME/logs/hadoop-hadoop-namenode-*.log
+
+# 检查NameNode是否在安全模式
+hdfs dfsadmin -safemode get
+# 输出：ON ← 安全模式开启，问题！
+
+# 查看NameNode RPC队列
+hdfs dfsadmin -getWorkerRatios
+```
+
+---
+
+## 第二章：DataNode故障排查
+
+### 2.1 DataNode无法启动
+
+**症状**: DataNode进程不存在
+
+**排查步骤**:
+
+```bash
+# Step 1: 检查进程状态
+jps | grep DataNode
+# 输出为空 ← DataNode未运行
+
+# Step 2: 检查日志
+tail -100 $HADOOP_HOME/logs/hadoop-hadoop-datanode-*.log
+
+# 常见错误：
+# 1. Permission denied → 检查目录权限
+# 2. Disk error → 检查磁盘
+# 3. Port in use → 检查端口
+
+# Step 3: 手动启动并观察
+hadoop-daemon.sh start datanode
+
+# Step 4: 检查配置
+cat $HADOOP_HOME/etc/hadoop/hdfs-site.xml | grep dfs.datanode.data.dir
+```
+
+**解决方案**:
+
+| 错误类型 | 解决方案 |
+|----------|----------|
+| 权限拒绝 | `chown -R hadoop:hadoop /path/to/data` |
+| 磁盘错误 | 检查 `smartctl -a /dev/sda` |
+| 端口占用 | 修改 `dfs.datanode.address` 端口 |
+| 元数据损坏 | 删除并重新创建数据目录 |
+
+---
+
+### 2.2 DataNode心跳超时
+
+**症状**: NameNode日志显示 "Lost contact with DataNode"
+
+**排查步骤**:
+
+```bash
+# Step 1: 检查网络连通性
+ping <datanode_ip>
+
+# Step 2: 检查DataNode日志
+tail -f $HADOOP_HOME/logs/hadoop-hadoop-datanode-*.log
+# 查找 "heartbeat" 相关日志
+
+# Step 3: 检查系统负载
+top
+uptime
+
+# Step 4: 检查磁盘IO
+iostat -x 5
+```
+
+**解决方案**:
+
+```bash
+# 方案1: 调整心跳参数
+# 在 hdfs-site.xml 中添加：
+<property>
+  <name>dfs.heartbeat.interval</name>
+  <value>10</value>  <!-- 默认3秒，改为10秒 -->
+</property>
+<property>
+  <name>dfs.namenode.heartbeat.recheck-interval</name>
+  <value>600000</value>  <!-- 10分钟检查一次 -->
+</property>
+
+# 方案2: 刷新节点配置
+hdfs dfsadmin -refreshNodes
+```
+
+---
+
+### 2.3 磁盘空间不足
+
+**症状**: 写入失败，提示 "No space left on device"
+
+**排查步骤**:
+
+```bash
+# Step 1: 检查磁盘使用情况
+df -h
+
+# Step 2: 查看各节点磁盘
+hdfs dfsadmin -report
+
+# Step 3: 查找大文件
+hdfs dfs -du -h / | sort -rh | head -20
+
+# Step 4: 检查HDFS使用
+hdfs dfsadmin -report | grep "DFS Used%"
+```
+
+**解决方案**:
+
+```bash
+# 方案1: 清理临时文件
+hdfs dfs -rm -r /tmp/*
+
+# 方案2: 删除不需要的文件
+hdfs dfs -rm -skipTrash /old/data/*
+
+# 方案3: 运行均衡器平衡磁盘
+hdfs balancer -threshold 10
+
+# 方案4: 添加新磁盘（永久方案）
+# 1. 在新磁盘创建目录
+# 2. 在 hdfs-site.xml 中添加新路径
+# 3. 重启DataNode
+```
+
+---
+
+## 第三章：NameNode故障排查
+
+### 3.1 NameNode无法启动
+
+**症状**: NameNode进程不存在或启动失败
+
+**排查步骤**:
+
+```bash
+# Step 1: 检查日志
+tail -200 $HADOOP_HOME/logs/hadoop-hadoop-namenode-*.log
+
+# 常见错误：
+# 1. "NameNode is not formatted" → 需要格式化
+# 2. "Inconsistent FSImage" → 元数据损坏
+# 3. "Port 9000 is in use" → 端口占用
+
+# Step 2: 检查配置
+cat $HADOOP_HOME/etc/hadoop/hdfs-site.xml | grep dfs.namenode.name.dir
+
+# Step 3: 检查目录权限
+ls -la /path/to/name/dir
+```
+
+**解决方案**:
+
+```bash
+# 情况1: 首次启动未格式化
+hdfs namenode -format
+hadoop-daemon.sh start namenode
+
+# 情况2: 元数据损坏（从备份恢复）
+# 1. 停止集群
+stop-dfs.sh
+
+# 2. 备份损坏的元数据
+cp -r /path/to/name/dir /backup/broken
+
+# 3. 复制备份
+cp -r /backup/good/* /path/to/name/dir/
+
+# 4. 启动集群
+start-dfs.sh
+
+# 情况3: 使用检查点恢复
+hdfs namenode -importCheckpoint
+```
+
+---
+
+### 3.2 NameNode进入安全模式
+
+**症状**: 操作失败，提示 "NameNode is in safe mode"
+
+**原因**: 系统检测到副本数不足，自动进入保护模式
+
+**排查步骤**:
+
+```bash
+# Step 1: 查看安全模式原因
+hdfs dfsadmin -safemode get
+# 输出：ON - Reason: "The ratio of reported blocks 0.9900 has not reached the threshold 0.9990"
+
+# Step 2: 查看缺失的块
+hdfs fsck / | grep "MISSING"
+
+# Step 3: 检查DataNode状态
+hdfs dfsadmin -report
+```
+
+**解决方案**:
+
+```bash
+# 方案1: 等待自动恢复（推荐）
+# 当DataNode恢复后，系统会自动退出安全模式
+
+# 方案2: 手动退出（谨慎使用）
+hdfs dfsadmin -safemode leave
+
+# 方案3: 强制退出（最后手段）
+hdfs dfsadmin -safemode forceExit
+
+# 方案4: 调整安全模式阈值（预防）
+# 在 hdfs-site.xml 中：
+<property>
+  <name>dfs.safemode.threshold.pct</name>
+  <value>0.95</value>  // 默认0.999，改为0.95
+</property>
+```
+
+---
+
+### 3.3 元数据过大
+
+**症状**: NameNode内存使用过高，响应变慢
+
+**排查步骤**:
+
+```bash
+# Step 1: 查看NameNode内存使用
+jmap -heap <namenode_pid>
+
+# Step 2: 查看文件数量
+hdfs dfsadmin -report | grep "Files and Directories"
+# 输出：Files and Directories: 1000000 ← 文件数过多！
+
+# Step 3: 查看NameNode存储
+hdfs dfsadmin -report | grep "NameNode storage"
+```
+
+**解决方案**:
+
+```bash
+# 方案1: 清理小文件（重要！）
+# 小文件会占用大量元数据内存
+
+# 方案2: 启用HA Federation
+# 配置多个NameNode分担负载
+
+# 方案3: 增加NameNode内存
+# 在 hadoop-env.sh 中：
+export HADOOP_NAMENODE_OPTS="-Xmx8g"
+
+# 方案4: 定期合并快照
+hdfs dfsadmin -safemode enter
+hdfs dfsadmin -saveNamespace
+hdfs dfsadmin -safemode leave
+```
+
+---
+
+## 第四章：Block故障排查
+
+### 4.1 Block缺失
+
+**症状**: 读取文件失败，提示 "File could only be replicated to 0 nodes"
+
+**排查步骤**:
+
+```bash
+# Step 1: 检查Block状态
+hdfs fsck /path/to/file -files -blocks -locations
+
+# Step 2: 查看缺失的Block
+hdfs fsck / | grep "MISSING"
+
+# Step 3: 检查DataNode状态
+hdfs dfsadmin -report
+```
+
+**解决方案**:
+
+```bash
+# 方案1: 删除损坏的Block
+hdfs fsck /path/to/file -delete
+
+# 方案2: 从备份恢复（如果有）
+hdfs dfs -cp /backup/file /current/file
+
+# 方案3: 标记损坏Block以便恢复
+hdfs fsck -mark
+```
+
+---
+
+### 4.2 副本不足
+
+**症状**: 部分Block的副本数低于配置值
+
+**排查步骤**:
+
+```bash
+# Step 1: 查看副本不足的Block
+hdfs fsck / | grep "Under replicated"
+
+# Step 2: 查看副本分布
+hdfs fsck /path/to/file -files -blocks -locations -racks
+```
+
+**解决方案**:
+
+```bash
+# 方案1: 触发自动修复
+hdfs dfsadmin -refreshNodes
+
+# 方案2: 运行均衡器
+hdfs balancer -threshold 10
+
+# 方案3: 手动修复特定Block
+hdfs fsck /path/to/file -replicate
+```
+
+---
+
+## 第五章：网络故障排查
+
+### 5.1 连接超时
+
+**症状**: 操作失败，提示 "Call From ... failed on socket timeout"
+
+**排查步骤**:
+
+```bash
+# Step 1: 测试网络连通性
+ping <target_host>
+
+# Step 2: 测试端口连通性
+nc -zv <target_host> 9000
+
+# Step 3: 检查防火墙
+systemctl status iptables  # 或 firewalld
+```
+
+**解决方案**:
+
+```bash
+# 方案1: 调整超时参数
+# 在 core-site.xml 中：
+<property>
+  <name>ipc.client.connect.timeout</name>
+  <value>60000</value>  // 1分钟
+</property>
+<property>
+  <name>ipc.client.connect.max.retries</name>
+  <value>3</value>
+</property>
+
+# 方案2: 检查并关闭防火墙
+systemctl stop iptables
+```
+
+---
+
+### 5.2 主机名解析失败
+
+**症状**: 无法解析主机名
+
+**排查步骤**:
+
+```bash
+# Step 1: 检查hosts文件
+cat /etc/hosts
+
+# Step 2: 测试DNS解析
+nslookup <hostname>
+```
+
+**解决方案**:
+
+```bash
+# 在 /etc/hosts 中添加：
+192.168.1.1 namenode
+192.168.1.2 datanode1
+192.168.1.3 datanode2
+```
+
+---
+
+## 第六章：应急处理流程
+
+### 6.1 紧急恢复步骤
+
+```
+🔴 紧急情况处理流程
+
+1. 停止写入操作
+   └─→ hdfs dfsadmin -safemode enter
+
+2. 评估问题严重程度
+   └─→ hdfs dfsadmin -report
+
+3. 收集日志
+   └─→ 保存所有NameNode和DataNode日志
+
+4. 制定恢复方案
+   └─→ 参考本手册对应章节
+
+5. 执行恢复
+   └─→ 按照解决方案步骤操作
+
+6. 验证恢复
+   └─→ hdfs dfsadmin -report
+   └─→ hdfs fsck /
+```
+
+### 6.2 数据恢复优先级
+
+| 优先级 | 数据类型 | 恢复方法 |
+|--------|----------|----------|
+| 1 | 最新写入的数据 | 从其他副本恢复 |
+| 2 | 重要的历史数据 | 从备份恢复 |
+| 3 | 可重建的数据 | 重新计算生成 |
+
+### 6.3 常用紧急命令
+
+```bash
+# 1. 立即停止集群
+stop-dfs.sh
+
+# 2. 进入安全模式（保护数据）
+hdfs dfsadmin -safemode enter
+
+# 3. 保存元数据
+hdfs dfsadmin -saveNamespace
+
+# 4. 刷新节点配置
+hdfs dfsadmin -refreshNodes
+
+# 5. 运行全面检查
+hdfs fsck / -files -blocks -locations -racks
+
+# 6. 均衡集群
+hdfs balancer -threshold 10
+```
+
+---
+
+## 附录：常用诊断命令速查
+
+| 场景 | 命令 |
+|------|------|
+| 集群健康检查 | `hdfs dfsadmin -report` |
+| 文件系统检查 | `hdfs fsck / -files -blocks` |
+| 查看NameNode状态 | `jps \| grep NameNode` |
+| 查看DataNode状态 | `jps \| grep DataNode` |
+| 安全模式状态 | `hdfs dfsadmin -safemode get` |
+| 退出安全模式 | `hdfs dfsadmin -safemode leave` |
+| 节点拓扑 | `hdfs dfsadmin -printTopology` |
+| 均衡集群 | `hdfs balancer -threshold 10` |
+| 查看块信息 | `hdfs fsck /path -files -blocks` |
