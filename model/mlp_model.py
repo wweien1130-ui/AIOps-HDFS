@@ -55,33 +55,49 @@ def load_mlp_model(model_path: str, input_dim: int, device: str = None) -> MLP:
 
 
 def detect_anomalies(
-        model: MLP,
+        model: nn.Module,
         scaler,
         data_file: str,
         threshold: float = 0.8,
         template_file: str = None
 ) -> List[Dict]:
-    """使用训练好的模型检测异常"""
+    """使用训练好的模型全量检测异常（支持 GPU/CPU 自动切换）"""
+    # 1. 加载并预处理数据
     data = pd.read_csv(data_file)
-    X = data.iloc[:, 3:].values
-    X = scaler.transform(X)
+    X_raw = data.iloc[:, 3:].values
+    X_scaled = scaler.transform(X_raw)
 
+    # 2. 💡 核心修复：全量转为 Tensor 并推送到模型所在的设备
+    device = next(model.parameters()).device  # 自动获取模型当前在哪个设备
+    X_tensor = torch.tensor(X_scaled, dtype=torch.float32).to(device)
+
+    # 3. 💡 核心修复：批量推理
+    model.eval()
+    with torch.no_grad():
+        # 一次性拿到所有行的预测结果
+        outputs = model(X_tensor)
+        # 转为概率并拉回到 CPU 转为 numpy，方便后续逻辑处理
+        probs = torch.sigmoid(outputs).cpu().numpy().flatten()
+
+    # 4. 加载模板（保持不变）
     templates = {}
     if template_file and os.path.exists(template_file):
         template_data = pd.read_csv(template_file)
         for _, row in template_data.iterrows():
             templates[row['EventId']] = row['EventTemplate']
 
+    # 5. 遍历推理结果，筛选超过阈值的异常
     results = []
-    for i in range(len(X)):
-        block_id = data.iloc[i]['BlockId']
-        features = X[i]
-
-        probability = model.predict_proba(features)
-
+    for i, probability in enumerate(probs):
         if probability > threshold:
+            block_id = data.iloc[i]['BlockId']
+
             event_details = []
-            for event_id, count in zip(data.columns[3:], data.iloc[i, 3:].values):
+            # 这里的列名对应特征
+            feature_columns = data.columns[3:]
+            row_values = data.iloc[i, 3:].values
+
+            for event_id, count in zip(feature_columns, row_values):
                 if count > 0:
                     template = templates.get(event_id, 'Unknown')
                     event_details.append({
@@ -92,7 +108,7 @@ def detect_anomalies(
 
             results.append({
                 'block_id': block_id,
-                'probability': probability,
+                'probability': float(probability),  # 转为普通 float 方便前端显示
                 'events': event_details
             })
 
@@ -168,19 +184,25 @@ def train_mlp(
         if (epoch + 1) % 20 == 0:
             print(f'Epoch [{epoch + 1}/{epochs}]')
 
-    model.eval()
-    with torch.no_grad():
-        y_pred = model(X_test)
-        y_pred = torch.sigmoid(y_pred)
-        y_pred = (y_pred > 0.5).float()
-        f1 = f1_score(y_test.numpy().flatten(), y_pred.numpy().flatten())
+        # 评估模型
+        model.eval()
+        with torch.no_grad():
+            y_pred = model(X_test)
+            y_pred = torch.sigmoid(y_pred)  # 添加Sigmoid获取概率
+            y_pred = (y_pred > 0.5).float()
 
-    if model_out:
-        os.makedirs(os.path.dirname(model_out), exist_ok=True)
+            y_test_np = y_test.numpy().flatten()
+            y_pred_np = y_pred.numpy().flatten()
+
+            # 💡 核心修复点：显式导入 warnings，并加上 zero_division=0 阻止除零警告
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                # 加上 zero_division=0，如果出现除零就默认 F1 为 0，不报错
+                f1 = f1_score(y_test_np, y_pred_np, zero_division=0)
+
+            print(f"Final F1-Score: {f1:.4f}")
+
+        # 保存模型
         torch.save(model.state_dict(), model_out)
-
-    if scaler_out:
-        os.makedirs(os.path.dirname(scaler_out), exist_ok=True)
-        joblib.dump(scaler, scaler_out)
-
-    return model_out, scaler_out, f1
+        return model_out, scaler_out, f1

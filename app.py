@@ -1,3 +1,7 @@
+import sys
+import streamlit as st
+# 下面再写你原来的代码...
+
 import os
 
 os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "true"

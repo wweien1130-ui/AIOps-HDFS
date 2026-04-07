@@ -2,7 +2,7 @@ from langchain.agents import create_agent
 from model.factory import chat_models
 from agent.tools.agent_tools import (
     rag_retrieve, get_current_time, calculate,
-    preprocess_hdfs_logs, train_mlp_model, detect_anomaly
+    preprocess_hdfs_logs, train_mlp_model, detect_anomaly,check_model_readiness
 )
 from agent.tools.middleware import (monitor_tool, log_before_model, report_prompt_switch)
 from utils.prompt_loader import load_system_prompts
@@ -13,7 +13,7 @@ class ReactAgent:
             system_prompt=load_system_prompts(),
             tools=[
                 rag_retrieve, get_current_time, calculate,
-                preprocess_hdfs_logs, train_mlp_model, detect_anomaly
+                preprocess_hdfs_logs, train_mlp_model, detect_anomaly,check_model_readiness
             ],
             middleware=[monitor_tool, log_before_model, report_prompt_switch]
         )
