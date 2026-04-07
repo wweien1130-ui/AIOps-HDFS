@@ -6,7 +6,7 @@ os.environ["HF_HOME"] = ""
 import streamlit as st
 from agent.react_agent import ReactAgent
 
-st.title("智扫通机器人智能客服")
+st.title("自动化日志异常检测机器人")
 st.divider()
 
 if "agent" not in st.session_state:
@@ -26,7 +26,7 @@ if prompt:
         st.markdown(prompt)
     st.session_state["message"].append({"role": "user", "content": prompt})
 
-    with st.spinner("智能客服思考中..."):
+    with st.spinner("机器人思考中..."):
         full_response = ""
         response_placeholder = st.chat_message("assistant")
 
