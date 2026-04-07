@@ -1,81 +1,134 @@
-import re
-import pandas as pd
 import numpy as np
-from collections import defaultdict
+import pandas as pd
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import f1_score
+import matplotlib.pyplot as plt
+import joblib
 
-class LogPreprocessor:
-    def __init__(self):
-        self.templates = {}
-        self.template_counter = 0
-    
-    def load_templates(self, template_file):
-        """加载预定义的日志模板"""
-        data = pd.read_csv(template_file)
-        for _, row in data.iterrows():
-            event_id = row['EventId']
-            template = row['EventTemplate']
-            self.templates[template] = event_id
-        # 反转映射，方便通过事件ID查找模板
-        self.id_to_template = {v: k for k, v in self.templates.items()}
-    
-    def preprocess_log(self, log_file, output_file):
-        """预处理日志文件，生成事件出现矩阵"""
-        # 读取日志文件
-        with open(log_file, 'r', encoding='utf-8', errors='ignore') as f:
-            logs = f.readlines()
-        
-        # 初始化事件计数器
-        event_counts = defaultdict(lambda: defaultdict(int))
-        current_block = None
-        
-        # 处理每条日志
-        for log in logs:
-            # 提取块ID
-            block_match = re.search(r'blk_[-\d]+', log)
-            if block_match:
-                current_block = block_match.group(0)
-            
-            if current_block:
-                # 模板化日志
-                templated_log = self.template_log(log)
-                # 查找对应的事件ID
-                event_id = self.templates.get(templated_log, 'Unknown')
-                if event_id != 'Unknown':
-                    event_counts[current_block][event_id] += 1
-        
-        # 生成事件出现矩阵
-        blocks = list(event_counts.keys())
-        event_ids = sorted(self.templates.values())
-        
-        # 创建数据框
-        data = []
-        for block in blocks:
-            row = {'BlockId': block}
-            for event_id in event_ids:
-                row[event_id] = event_counts[block].get(event_id, 0)
-            data.append(row)
-        
-        df = pd.DataFrame(data)
-        
-        # 保存结果
-        df.to_csv(output_file, index=False)
-        print(f'Preprocessed log saved to {output_file}')
-    
-    def template_log(self, log):
-        """将日志转换为模板"""
-        # 替换IP地址
-        log = re.sub(r'\d+\.\d+\.\d+\.\d+', '<*>', log)
-        # 替换日期时间
-        log = re.sub(r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3}', '<*>', log)
-        # 替换数字
-        log = re.sub(r'\b\d+\b', '<*>', log)
-        # 替换块ID
-        log = re.sub(r'blk_[-\d]+', '<*>', log)
-        return log
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(f'Using device: {device}')
 
-if __name__ == '__main__':
-    preprocessor = LogPreprocessor()
-    # 加载预定义的模板
-    preprocessor.load_templates('HDFS_v1/preprocessed/HDFS.log_templates.csv')
-    # 预处理日志
-    preprocessor.preprocess_log('HDFS_v1/HDFS.log', 'HDFS_v1/preprocessed/Event_occurrence_matrix_new.csv')
+# 加载数据
+data = pd.read_csv('HDFS_v1/preprocessed/Event_occurrence_matrix.csv')
+
+# 提取特征和标签
+X = data.iloc[:, 3:].values  # 从第4列开始是特征
+# 将标签转换为0和1
+y = data['Label'].map({'Success': 0, 'Fail': 1}).values
+
+# 数据归一化
+scaler = StandardScaler()
+X = scaler.fit_transform(X)
+
+# 划分训练集和测试集
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+
+# 转换为PyTorch张量
+X_train = torch.tensor(X_train, dtype=torch.float32).to(device)
+y_train = torch.tensor(y_train, dtype=torch.float32).unsqueeze(1).to(device)
+X_test = torch.tensor(X_test, dtype=torch.float32).to(device)
+y_test = torch.tensor(y_test, dtype=torch.float32).unsqueeze(1).to(device)
+
+# 计算类别权重，处理数据不平衡
+class_counts = np.bincount(y_train.cpu().numpy().flatten().astype(int))
+class_weights = 1.0 / class_counts
+class_weights = torch.tensor(class_weights, dtype=torch.float32).to(device)
+
+
+# 定义MLP模型
+class MLP(nn.Module):
+    def __init__(self, input_dim):
+        super(MLP, self).__init__()
+        self.fc1 = nn.Linear(input_dim, 128)  # 减少隐藏层大小
+        self.relu1 = nn.ReLU()
+        self.fc2 = nn.Linear(128, 32)  # 减少隐藏层大小
+        self.relu2 = nn.ReLU()
+        self.fc3 = nn.Linear(32, 1)
+
+    def forward(self, x):
+        x = self.fc1(x)
+        x = self.relu1(x)
+        x = self.fc2(x)
+        x = self.relu2(x)
+        x = self.fc3(x)
+        return x
+
+
+# 初始化模型、损失函数和优化器
+input_dim = X_train.shape[1]
+model = MLP(input_dim).to(device)
+criterion = nn.BCEWithLogitsLoss(pos_weight=class_weights[1])
+optimizer = optim.Adam(model.parameters(), lr=0.001)
+
+# 训练模型
+epochs = 100
+batch_size = 16
+losses = []
+
+best_loss = float('inf')
+patience = 10
+no_improve_count = 0
+best_model_state = None
+
+for epoch in range(epochs):
+    model.train()
+    epoch_loss = 0
+    for i in range(0, len(X_train), batch_size):
+        batch_X = X_train[i:i + batch_size]
+        batch_y = y_train[i:i + batch_size]
+
+        optimizer.zero_grad()
+        outputs = model(batch_X)
+        loss = criterion(outputs, batch_y)
+        loss.backward()
+        optimizer.step()
+
+        epoch_loss += loss.item()
+
+    avg_loss = epoch_loss / (len(X_train) // batch_size)
+    losses.append(avg_loss)
+
+    if avg_loss < best_loss:
+        best_loss = avg_loss
+        no_improve_count = 0
+        best_model_state = model.state_dict().copy()
+    else:
+        no_improve_count += 1
+
+    if (epoch + 1) % 10 == 0:
+        print(f'Epoch [{epoch + 1}/{epochs}], Loss: {avg_loss:.4f}, Best Loss: {best_loss:.4f}')
+
+    if no_improve_count >= patience:
+        print(f'Early stopping at epoch {epoch + 1}! No improvement for {patience} epochs.')
+        break
+
+if best_model_state is not None:
+    model.load_state_dict(best_model_state)
+    print(f'Loaded best model with loss: {best_loss:.4f}')
+
+# 评估模型
+model.eval()
+with torch.no_grad():
+    y_pred = model(X_test)
+    y_pred = torch.sigmoid(y_pred)  # 添加Sigmoid获取概率
+    y_pred = (y_pred > 0.5).float()
+    f1 = f1_score(y_test.cpu().numpy(), y_pred.cpu().numpy())
+    print(f'F1-Score: {f1:.4f}')
+
+# 保存模型权重和scaler
+torch.save(model.state_dict(), 'LogMLP_Model.pth')
+joblib.dump(scaler, 'scaler.pkl')
+print('Model saved to LogMLP_Model.pth')
+print('Scaler saved to scaler.pkl')
+
+# 绘制损失曲线
+plt.plot(losses)
+plt.xlabel('Epoch')
+plt.ylabel('Loss')
+plt.title('Training Loss')
+plt.savefig('loss_curve.png')
+print('Loss curve saved to loss_curve.png')
