@@ -1,13 +1,15 @@
 import sys
 import os
+import json
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import pandas as pd
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
-import json
 
 from utils.path_tool import get_abs_path
 
@@ -20,6 +22,46 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+model_cache = {
+    "scaler": None,
+    "model": None,
+    "data": None,
+    "templates": None
+}
+
+@app.on_event("startup")
+async def startup_event():
+    """启动时预加载模型和数据"""
+    import joblib
+    from model.mlp_model import load_mlp_model
+    
+    print("🚀 正在加载模型和数据，请稍候...")
+    
+    matrix_file = get_abs_path("HDFS_v1/preprocessed/Event_occurrence_matrix.csv")
+    model_path = get_abs_path("LogMLP_Model.pth")
+    scaler_path = get_abs_path("scaler.pkl")
+    template_file = get_abs_path("HDFS_v1/preprocessed/HDFS.log_templates.csv")
+    
+    try:
+        model_cache["scaler"] = joblib.load(scaler_path)
+        print("✅ 标准化器加载完成")
+        
+        data = pd.read_csv(matrix_file)
+        model_cache["data"] = data
+        print(f"✅ 特征矩阵加载完成: {len(data)} 行")
+        
+        input_dim = data.shape[1] - 3
+        model_cache["model"] = load_mlp_model(model_path, input_dim)
+        print("✅ MLP模型加载完成")
+        
+        model_cache["templates"] = pd.read_csv(template_file)
+        print("✅ 日志模板加载完成")
+        
+        print("🎉 所有资源加载完毕！")
+    except Exception as e:
+        print(f"❌ 启动时加载失败: {e}")
+        raise
 
 
 class AnalyzeRequest(BaseModel):
@@ -58,38 +100,24 @@ async def health_check():
 async def analyze_logs(request: AnalyzeRequest):
     """
     执行MLP异常检测，返回结构化JSON数据
+    使用预加载的模型和数据
     """
-    from model.mlp_model import detect_anomalies, load_mlp_model
-    import joblib
-
-    matrix_file = get_abs_path("HDFS_v1/preprocessed/Event_occurrence_matrix.csv")
-    model_path = get_abs_path("LogMLP_Model.pth")
-    scaler_path = get_abs_path("scaler.pkl")
-    template_file = get_abs_path("HDFS_v1/preprocessed/HDFS.log_templates.csv")
-
-    if not os.path.exists(matrix_file):
-        raise HTTPException(status_code=400, detail="特征矩阵文件不存在，请先执行预处理")
-    if not os.path.exists(model_path):
-        raise HTTPException(status_code=400, detail="模型文件不存在，请先训练模型")
-    if not os.path.exists(scaler_path):
-        raise HTTPException(status_code=400, detail="标准化器文件不存在")
+    from model.mlp_model import detect_anomalies
+    
+    if model_cache["model"] is None or model_cache["scaler"] is None:
+        raise HTTPException(status_code=503, detail="模型尚未加载，请等待服务启动完成")
 
     try:
-        scaler = joblib.load(scaler_path)
-        model = load_mlp_model(model_path, input_dim=128)
-
         results = detect_anomalies(
-            model=model,
-            scaler=scaler,
-            data_file=matrix_file,
+            model=model_cache["model"],
+            scaler=model_cache["scaler"],
+            data_file=None,
             threshold=request.threshold,
-            template_file=template_file
+            template_file=None,
+            data=model_cache["data"]
         )
 
-        total_blocks = 0
-        import pandas as pd
-        data = pd.read_csv(matrix_file)
-        total_blocks = len(data)
+        total_blocks = len(model_cache["data"])
 
         anomaly_count = len(results)
         anomaly_ratio = anomaly_count / total_blocks if total_blocks > 0 else 0
@@ -104,7 +132,7 @@ async def analyze_logs(request: AnalyzeRequest):
         )
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"检测失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"分析失败: {str(e)}")
 
 
 @app.post("/api/chat")
@@ -153,7 +181,7 @@ async def ocr_image(file: UploadFile = File(...)):
 
         try:
             import easyocr
-            reader = easyocr.Reader(['ch_sim', 'en'], gpu=False)
+            reader = easyocr.Reader(['ch_sim', 'en'], gpu=True)
             results = reader.readtext(image_array)
 
             if results:

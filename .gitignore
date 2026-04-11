@@ -108,10 +108,17 @@ Thumbs.db
 *.tmp
 *.temp
 
+# Node.js 前端项目
+frontend/node_modules/
+frontend/.vite/
+frontend/dist/
+frontend/package-lock.json
+
 # 数据文件（根据项目需要调整）
 *.csv
 *.json
 *.pkl
+*.pth
 *.h5
 *.model
 
@@ -129,3 +136,7 @@ secrets.json
 *.bin
 *.dat
 *.npy
+
+# Chroma向量数据库
+chroma_db/
+chroma_data/

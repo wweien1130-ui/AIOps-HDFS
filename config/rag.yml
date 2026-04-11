@@ -14,7 +14,7 @@ vector_store:
   collection_name: "hdfs_knowledge"
 
   #聊天模型
-  chat_model : "tongyi-xiaomi-analysis-pro"
+  chat_model : "qwen3-max-2026-01-23"
 
   # 嵌入模型
   embedding:

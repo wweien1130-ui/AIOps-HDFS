@@ -57,43 +57,43 @@ def load_mlp_model(model_path: str, input_dim: int, device: str = None) -> MLP:
 def detect_anomalies(
         model: nn.Module,
         scaler,
-        data_file: str,
+        data_file: str = None,
         threshold: float = 0.8,
-        template_file: str = None
+        template_file: str = None,
+        data=None,
+        templates_dict=None
 ) -> List[Dict]:
     """使用训练好的模型全量检测异常（支持 GPU/CPU 自动切换）"""
-    # 1. 加载并预处理数据
-    data = pd.read_csv(data_file)
+    
+    if data is None and data_file is None:
+        raise ValueError("必须提供 data 或 data_file 参数")
+    
+    if data is None:
+        data = pd.read_csv(data_file)
+    
     X_raw = data.iloc[:, 3:].values
     X_scaled = scaler.transform(X_raw)
 
-    # 2. 💡 核心修复：全量转为 Tensor 并推送到模型所在的设备
-    device = next(model.parameters()).device  # 自动获取模型当前在哪个设备
+    device = next(model.parameters()).device
     X_tensor = torch.tensor(X_scaled, dtype=torch.float32).to(device)
 
-    # 3. 💡 核心修复：批量推理
     model.eval()
     with torch.no_grad():
-        # 一次性拿到所有行的预测结果
         outputs = model(X_tensor)
-        # 转为概率并拉回到 CPU 转为 numpy，方便后续逻辑处理
         probs = torch.sigmoid(outputs).cpu().numpy().flatten()
 
-    # 4. 加载模板（保持不变）
-    templates = {}
-    if template_file and os.path.exists(template_file):
+    templates = templates_dict if templates_dict else {}
+    if not templates and template_file and os.path.exists(template_file):
         template_data = pd.read_csv(template_file)
         for _, row in template_data.iterrows():
             templates[row['EventId']] = row['EventTemplate']
 
-    # 5. 遍历推理结果，筛选超过阈值的异常
     results = []
     for i, probability in enumerate(probs):
         if probability > threshold:
             block_id = data.iloc[i]['BlockId']
 
             event_details = []
-            # 这里的列名对应特征
             feature_columns = data.columns[3:]
             row_values = data.iloc[i, 3:].values
 
@@ -108,7 +108,7 @@ def detect_anomalies(
 
             results.append({
                 'block_id': block_id,
-                'probability': float(probability),  # 转为普通 float 方便前端显示
+                'probability': float(probability),
                 'events': event_details
             })
 
