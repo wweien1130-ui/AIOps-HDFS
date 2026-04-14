@@ -1,6 +1,77 @@
 # Kafka 主题管理的完整命令
 
+
+
+# 创建一个临时消费者组，让它从最早偏移量开始，然后查看位置
+docker exec kafka /opt/kafka/bin/kafka-consumer-groups.sh \
+  --bootstrap-server localhost:9092 \
+  --group temp-group \
+  --reset-offsets --to-earliest --topic hdfs-logs --dry-run
+
+
+![img_1.png](img_1.png)
+![img.png](img.png)
+
+
 ## 5. 查看主题数据（消费者操作）
+
+
+
+
+
+
+完整的清空数据流程
+bash
+# 1. 设置立即过期
+docker exec kafka /opt/kafka/bin/kafka-configs.sh \
+  --bootstrap-server localhost:9092 \
+  --entity-type topics \
+  --entity-name hdfs-logs \
+  --alter \
+  --add-config retention.ms=1
+
+# 2. 等待清理
+echo "等待数据清理..."
+sleep 5
+
+# 3. 验证数据是否清空
+echo "验证数据..."
+docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
+  --bootstrap-server localhost:9092 \
+  --topic hdfs-logs \
+  --from-beginning \
+  --max-messages 1 \
+  --timeout-ms 3000 2>&1 | grep -q "Processed a total of 0 messages" && echo "✅ 数据已清空" || echo "⚠️ 仍有数据"
+
+# 4. 恢复保留时间
+echo "恢复保留策略..."
+docker exec kafka /opt/kafka/bin/kafka-configs.sh \
+  --bootstrap-server localhost:9092 \
+  --entity-type topics \
+  --entity-name hdfs-logs \
+  --alter \
+  --add-config retention.ms=604800000
+
+# 5. 确认恢复
+docker exec kafka /opt/kafka/bin/kafka-configs.sh \
+  --bootstrap-server localhost:9092 \
+  --entity-type topics \
+  --entity-name hdfs-logs \
+  --describe | grep retention.ms
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 ### 查看所有消息
 

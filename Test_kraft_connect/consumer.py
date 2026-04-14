@@ -1,145 +1,135 @@
-# consumer_fixed.py
 import time
-import argparse
 import re
+import csv
+import argparse
 from kafka import KafkaConsumer
-from kafka.errors import KafkaError
-from kafka import TopicPartition
 
 
-class FixedLogStreamConsumer:
-    def __init__(self, bootstrap_servers, topic='hdfs-logs', group_id='hdfs-agent'):
+# ============================================================
+# 1. 加载事件模板并转换为正则
+# ============================================================
+def load_templates(csv_path):
+    templates = []
+    with open(csv_path, 'r', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            eid = row['EventId']
+            template = row['EventTemplate']
+            pattern = re.escape(template).replace(r'\[\*\]', '(.*?)')
+            templates.append((eid, re.compile(pattern)))
+    return templates
+
+
+# ============================================================
+# 2. 异常事件白名单
+# ============================================================
+ANOMALY_EVENTS = {
+    'E1', 'E4', 'E7', 'E8', 'E10', 'E12', 'E13', 'E14', 'E17',
+    'E20', 'E23', 'E24', 'E27', 'E28', 'E29'
+}
+
+# ============================================================
+# 3. 提取 BlockId
+# ============================================================
+BLOCK_ID_PAT = re.compile(r'(blk[-_]?-?\d+)')
+
+def extract_block_id(log_line):
+    match = BLOCK_ID_PAT.search(log_line)
+    return match.group(1) if match else 'unknown'
+
+
+# ============================================================
+# 4. 事件匹配器
+# ============================================================
+class LogMatcher:
+    def __init__(self, templates_csv_path):
+        self.templates = load_templates(templates_csv_path)
+        print(f"已加载 {len(self.templates)} 个事件模板")
+
+    def match(self, log_line):
+        for eid, regex in self.templates:
+            if regex.search(log_line):
+                return eid
+        return None
+
+
+# ============================================================
+# 5. Kafka 消费者
+# ============================================================
+class HdfsLogConsumer:
+    def __init__(self, bootstrap_servers, topic='hdfs-logs', group_id='hdfs-agent',
+                 templates_path='../HDFS_v1/preprocessed/HDFS.log_templates.csv'):
         self.topic = topic
-        self.bootstrap_servers = bootstrap_servers
+        self.matcher = LogMatcher(templates_path)
 
-        print(f"正在连接 Kafka: {bootstrap_servers}")
-        print(f"主题: {topic}")
-        print(f"消费者组: {group_id}")
-
-        # 方式1：使用 subscribe（推荐）
         self.consumer = KafkaConsumer(
             topic,
             bootstrap_servers=bootstrap_servers,
             group_id=group_id,
             auto_offset_reset='earliest',
             enable_auto_commit=True,
-            value_deserializer=lambda m: m.decode('utf-8'),
-            consumer_timeout_ms=5000,  # 5秒超时
-            max_poll_records=100,
-            request_timeout_ms=30000,
-            session_timeout_ms=10000,
-            heartbeat_interval_ms=3000
+            value_deserializer=lambda m: m,
         )
 
-        # 验证连接 - 不调用 assign，只查看分区信息
-        try:
-            partitions = self.consumer.partitions_for_topic(topic)
-            print(f"✅ 连接成功! 分区数: {len(partitions) if partitions else 0}")
+        self.stats = {'total': 0, 'matched': 0, 'anomaly': 0, 'normal': 0}
 
-            # 获取每个分区的偏移量信息（使用 consumer 的 end_offsets 方法）
-            if partitions:
-                # 创建 TopicPartition 对象列表
-                topic_partitions = [TopicPartition(topic, p) for p in partitions]
-                # 获取结束偏移量
-                end_offsets = self.consumer.end_offsets(topic_partitions)
-                # 获取开始偏移量
-                beginning_offsets = self.consumer.beginning_offsets(topic_partitions)
+    def process_log(self, log_line):
+        self.stats['total'] += 1
+        # 确保是字符串类型
+        if isinstance(log_line, bytes):
+            log_line = log_line.decode('utf-8', errors='ignore')
 
-                for partition in partitions:
-                    tp = TopicPartition(topic, partition)
-                    beginning = beginning_offsets[tp]
-                    end = end_offsets[tp]
-                    print(f"   分区 {partition}: 偏移量 {beginning} - {end} (共 {end - beginning} 条)")
+        event_id = self.matcher.match(log_line)
 
-        except Exception as e:
-            print(f"⚠️ 获取分区信息失败: {e}")
-
-        self.stats = {
-            'total': 0,
-            'critical': 0,
-            'normal': 0,
-        }
-
-    def is_critical_log(self, log_str):
-        log_upper = log_str.upper()
-
-        CRITICAL_LEVELS = ['ERROR', 'FATAL', 'CRITICAL']
-        WARNING_LEVELS = ['WARN', 'WARNING']
-        CRITICAL_PATTERNS = [
-            r'\bERROR\b', r'\bFATAL\b', r'\bCRITICAL\b', r'\bEXCEPTION\b',
-            r'blk_\d+.*not found', r'block.*corrupt', r'failed\s+to',
-            r'timeout', r'DataNode.*failed', r'NameNode.*error',
-            r'Unsafe\s+mode', r'replica.*missing',
-        ]
-
-        if any(level in log_upper for level in CRITICAL_LEVELS):
-            return True
-        if any(level in log_upper for level in WARNING_LEVELS):
-            return True
-        for pattern in CRITICAL_PATTERNS:
-            if re.search(pattern, log_str, re.IGNORECASE):
-                return True
-        return False
+        if event_id:
+            self.stats['matched'] += 1
+            if event_id in ANOMALY_EVENTS:
+                self.stats['anomaly'] += 1
+                block_id = extract_block_id(log_line)
+                return {'type': 'anomaly', 'event_id': event_id, 'block_id': block_id, 'raw': log_line}
+            else:
+                self.stats['normal'] += 1
+                return {'type': 'normal', 'event_id': event_id}
+        return {'type': 'unknown', 'raw': log_line}
 
     def start_consuming(self, max_messages=None):
-        print(f"\n{'=' * 60}")
-        print(f"开始消费日志")
-        print(f"  Topic: {self.topic}")
-        print(f"  Kafka: {self.bootstrap_servers}")
-        print(f"  Group: {self.consumer.config['group_id']}")
-        print(f"{'=' * 60}\n")
+        print(f"\n开始消费 HDFS 日志 | Topic: {self.topic} | Group: {self.consumer.config['group_id']}\n")
 
         start_time = time.time()
-
         try:
             for i, message in enumerate(self.consumer):
-                # 处理消息
-                log_value = message.value
-                self.stats['total'] += 1
+                result = self.process_log(message.value)
 
-                # 判断是否为关键日志
-                is_critical = self.is_critical_log(log_value)
-                if is_critical:
-                    self.stats['critical'] += 1
-                    print(f"\n🚨 [{i}] 异常日志: {log_value[:150]}...")
-                else:
-                    self.stats['normal'] += 1
-                    if self.stats['total'] % 100 == 0:
-                        print(f"📊 已处理: {self.stats['total']} 条 (异常: {self.stats['critical']})", end='\r')
+                if result['type'] == 'anomaly':
+                    print(f"🚨 异常事件 {result['event_id']} | Block: {result['block_id']}")
+                    print(f"   {result['raw'][:10000]}...")
+
+                if (i + 1) % 1000 == 0:
+                    elapsed = time.time() - start_time
+                    rate = self.stats['total'] / elapsed
+                    print(f"📊 总计: {self.stats['total']:,} | 异常: {self.stats['anomaly']:,} | 速率: {rate:.0f}/秒",
+                          end='\r')
 
                 if max_messages and i >= max_messages - 1:
                     break
-
         except KeyboardInterrupt:
-            print("\n\n⏹️ 手动停止消费")
-        except Exception as e:
-            print(f"\n❌ 消费错误: {e}")
+            print("\n\n⏹️ 停止")
 
         elapsed = time.time() - start_time
-        print(f"\n\n{'=' * 60}")
-        print(f"✅ 消费完成!")
-        print(f"   总处理: {self.stats['total']:,} 条")
-        print(f"   异常日志: {self.stats['critical']:,} 条")
-        print(f"   正常日志: {self.stats['normal']:,} 条")
-        print(f"   总耗时: {elapsed:.1f} 秒")
-        if elapsed > 0:
-            print(f"   平均速率: {self.stats['total'] / elapsed:.0f} 条/秒")
-        print(f"{'=' * 60}")
+        print(
+            f"\n\n✅ 完成! 总: {self.stats['total']:,} | 匹配: {self.stats['matched']:,} | 异常: {self.stats['anomaly']:,} | 耗时: {elapsed:.1f}秒")
 
 
 def main():
-    parser = argparse.ArgumentParser(description='从Kafka消费HDFS日志')
-    parser.add_argument('--host', default='192.168.115.129:9092', help='Kafka地址')
-    parser.add_argument('--topic', default='hdfs-logs', help='Kafka Topic')
-    parser.add_argument('--group', default='hdfs-agent', help='消费者组')
-    parser.add_argument('--max', type=int, default=None, help='最大处理条数')
+    parser = argparse.ArgumentParser(description='HDFS日志消费者')
+    parser.add_argument('--host', default='192.168.115.129:9092')
+    parser.add_argument('--topic', default='hdfs-logs')
+    parser.add_argument('--group', default='hdfs-agent')
+    parser.add_argument('--templates', default='../HDFS_v1/preprocessed/HDFS.log_templates.csv')
+    parser.add_argument('--max', type=int, default=None)
     args = parser.parse_args()
 
-    consumer = FixedLogStreamConsumer(
-        bootstrap_servers=args.host,
-        topic=args.topic,
-        group_id=args.group
-    )
+    consumer = HdfsLogConsumer(args.host, args.topic, args.group, args.templates)
     consumer.start_consuming(max_messages=args.max)
 
 
