@@ -37,6 +37,19 @@ class LogProducer:
             self.producer.flush()  # 定期刷新，释放内存
 
 
+
+    # def send_message(self, message):
+    #     future = self.producer.send(self.topic, value=message)
+    #     try:
+    #         record_metadata = future.get(timeout=10)
+    #         self.total_sent += 1
+    #         if self.total_sent % 1000 == 0:
+    #             print(f"已确认 {self.total_sent} 条，分区 {record_metadata.partition}, offset {record_metadata.offset}")
+    #     except Exception as e:
+    #         print(f"发送失败: {e}")
+    #         raise
+
+
     def send_batch(self, messages):
         """批量发送"""
         for msg in messages:

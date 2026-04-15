@@ -1,17 +1,18 @@
 # Kafka 主题管理的完整命令
+python kafka_producer.py --host 192.168.115.129:9092 --topic hdfs-logs --file ../HDFS_v1/HDFS.log --max 10000   
+python consumer.py --host 192.168.115.129:9092 --topic hdfs-logs --group hdfs-agent-new
 
-
-
-# 创建一个临时消费者组，让它从最早偏移量开始，然后查看位置
-docker exec kafka /opt/kafka/bin/kafka-consumer-groups.sh \
+# 方法1：用消费者命令行快速测试是否有数据
+docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
   --bootstrap-server localhost:9092 \
-  --group temp-group \
-  --reset-offsets --to-earliest --topic hdfs-logs --dry-run
-
+  --topic hdfs-logs \
+  --from-beginning \
+  --max-messages 30 \
+  --timeout-ms 30000
 
 ![img_1.png](img_1.png)
 ![img.png](img.png)
-
+![img_2.png](img_2.png)
 
 ## 5. 查看主题数据（消费者操作）
 
