@@ -103,8 +103,8 @@ def main():
             if args.max and i >= args.max:
                 break
 
-            if (i + 1) % 1000 == 0:
-                print(f"已发送: {i + 1} 条...")
+            # if (i + 1) % 1000 == 0:
+        # print(f"已发送: {i + 1} 条...")
 
 
 

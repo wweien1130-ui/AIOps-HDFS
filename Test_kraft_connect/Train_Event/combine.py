@@ -8,7 +8,7 @@ import pandas as pd
 features = pd.read_csv('block_features.csv')
 
 # 读取标签映射
-labels = pd.read_csv('labels.csv')  # 列: block_id, label
+labels = pd.read_csv('Event.csv')  # 列: block_id, label
 
 # 合并
 df = features.merge(labels, on='block_id', how='inner')

@@ -1,5 +1,52 @@
 # 一、整体流程回顾
 
+
+```shell
+CREATE MATERIALIZED VIEW mv_block_stats TO block_event_stats AS
+SELECT block_id, event_id, cnt
+FROM (
+    SELECT 
+        extract(raw_log, '(blk[-_]?\\d+)') AS block_id,
+        CASE 
+            WHEN raw_log LIKE '%Adding an already existing block%' THEN 'E1'
+            WHEN raw_log LIKE '%Verification succeeded for%' THEN 'E2'
+            WHEN raw_log LIKE '%Served block%to%' THEN 'E3'
+            WHEN raw_log LIKE '%Got exception while serving%to%' THEN 'E4'
+            WHEN raw_log LIKE '%Receiving block%src:%dest:%' THEN 'E5'
+            WHEN raw_log LIKE '%Received block%src:%dest:%of size%' THEN 'E6'
+            WHEN raw_log LIKE '%writeBlock%received exception%' THEN 'E7'
+            WHEN raw_log LIKE '%PacketResponder%for block%Interrupted%' THEN 'E8'
+            WHEN raw_log LIKE '%Received block%of size%from%' THEN 'E9'
+            WHEN raw_log LIKE '%PacketResponder%Exception%' THEN 'E10'
+            WHEN raw_log LIKE '%PacketResponder%for block%terminating%' THEN 'E11'
+            WHEN raw_log LIKE '%Exception writing block%to mirror%' THEN 'E12'
+            WHEN raw_log LIKE '%Receiving empty packet for block%' THEN 'E13'
+            WHEN raw_log LIKE '%Exception in receiveBlock for block%' THEN 'E14'
+            WHEN raw_log LIKE '%Changing block file offset of block%from%to%meta file offset to%' THEN 'E15'
+            WHEN raw_log LIKE '%:Transmitted block%to%' THEN 'E16'
+            WHEN raw_log LIKE '%:Failed to transfer%to%got%' THEN 'E17'
+            WHEN raw_log LIKE '%Starting thread to transfer block%to%' THEN 'E18'
+            WHEN raw_log LIKE '%Reopen Block%' THEN 'E19'
+            WHEN raw_log LIKE '%Unexpected error trying to delete block%BlockInfo not found in volumeMap%' THEN 'E20'
+            WHEN raw_log LIKE '%Deleting block%file%' THEN 'E21'
+            WHEN raw_log LIKE '%allocateBlock:%' THEN 'E22'
+            WHEN raw_log LIKE '%delete:%is added to invalidSet of%' THEN 'E23'
+            WHEN raw_log LIKE '%Removing block%from neededReplications%does not belong to any file%' THEN 'E24'
+            WHEN raw_log LIKE '%ask%to replicate%to%' THEN 'E25'
+            WHEN raw_log LIKE '%addStoredBlock: blockMap updated:%is added to%size%' THEN 'E26'
+            WHEN raw_log LIKE '%addStoredBlock: Redundant addStoredBlock request received for%on%size%' THEN 'E27'
+            WHEN raw_log LIKE '%addStoredBlock: addStoredBlock request received for%on%size%But it does not belong to any file%' THEN 'E28'
+            WHEN raw_log LIKE '%PendingReplicationMonitor timed out block%' THEN 'E29'
+            ELSE NULL
+        END AS event_id,
+        1 AS cnt
+    FROM hdfs_logs
+)
+WHERE block_id != '' AND event_id IS NOT NULL;
+```
+
+
+
 ![img.png](img.png)
 
  # 二、可行性分析
