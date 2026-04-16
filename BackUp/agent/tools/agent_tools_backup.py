@@ -3,16 +3,6 @@ import re
 import sys
 from langchain_core.tools import tool
 
-
-# 在文件开头添加导入(这些文件是之后去Docker中使用的)
-# from kafka_producer_wrapper import send_logs_to_kafka
-# from combine_wrapper import combine_training_data
-# from train_wrapper import train_model
-# from data_preparator import prepare_training_data
-# from agent_tools_ready import check_model_readiness, detect_anomaly
-
-
-
 TOOLS_DIR = os.path.abspath(os.path.dirname(__file__))
 PROJECT_ROOT = os.path.dirname(os.path.dirname(TOOLS_DIR))
 if PROJECT_ROOT not in sys.path:
@@ -22,6 +12,9 @@ from utils.path_tool import get_abs_path
 
 KNOWLEDGE_DIR = get_abs_path("hdfs_knowledge")
 HDFS_BASE_DIR = get_abs_path("HDFS_v1")
+
+# 从 data_preparator.py 导入 prepare_training_data（多级降级策略）
+from data_preparator import prepare_training_data
 
 
 @tool(description="检查异常检测模型和特征矩阵是否准备就绪。")
