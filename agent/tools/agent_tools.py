@@ -3,25 +3,20 @@ import re
 import sys
 from langchain_core.tools import tool
 
-
-# 在文件开头添加导入(这些文件是之后去Docker中使用的)
-# from kafka_producer_wrapper import send_logs_to_kafka
-# from combine_wrapper import combine_training_data
-# from train_wrapper import train_model
-# from data_preparator import prepare_training_data
-# from agent_tools_ready import check_model_readiness, detect_anomaly
-
-
-
 TOOLS_DIR = os.path.abspath(os.path.dirname(__file__))
 PROJECT_ROOT = os.path.dirname(os.path.dirname(TOOLS_DIR))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
+if TOOLS_DIR not in sys.path:
+    sys.path.insert(0, TOOLS_DIR)
 
 from utils.path_tool import get_abs_path
 
 KNOWLEDGE_DIR = get_abs_path("hdfs_knowledge")
 HDFS_BASE_DIR = get_abs_path("HDFS_v1")
+
+# 从 data_preparator.py 导入 prepare_training_data（多级降级策略）
+from data_preparator import prepare_training_data
 
 
 @tool(description="检查异常检测模型和特征矩阵是否准备就绪。")
@@ -29,7 +24,8 @@ def check_model_readiness() -> str:
     """
     专门给 Agent 调用的‘眼睛’，返回模型和数据的物理存在状态。
     """
-    model_path = get_abs_path("LogMLP_Model.pth")
+    # model_path = get_abs_path("LogMLP_Model.pth")
+    model_path = get_abs_path("block_anomaly_model.pkl")
     scaler_path = get_abs_path("scaler.pkl")
     matrix_path = os.path.join(HDFS_BASE_DIR, "preprocessed", "Event_occurrence_matrix.csv")
 
@@ -42,6 +38,7 @@ def check_model_readiness() -> str:
         return "\n".join(status) + "\n\n结论：所有组件已就绪，可以直接执行 detect_anomaly。"
     else:
         return "\n".join(status) + "\n\n结论：组件不全，需要先执行预处理或训练。"
+
 
 def search_local_files(query: str):
     results = []
@@ -93,8 +90,33 @@ def calculate(expression: str) -> str:
         return "计算错误"
 
 
-@tool(description="第一步：预处理HDFS日志，必须先生成'Event_occurrence_matrix.csv'。")
+@tool(description="第一步：预处理HDFS日志（多级降级策略）")
 def preprocess_hdfs_logs(log_file: str = None) -> str:
+    """
+    预处理HDFS日志 - 多级降级策略：
+
+    优先级1: 从备份目录复制官方 Event_occurrence_matrix.csv
+    优先级2: 从备份目录复制 training_data.csv
+    优先级3: 从备份目录复制 block_features.csv + Event.csv 并合并
+    兜底方案: 使用 log_preprocessor.py 本地解析日志文件（最慢）
+    """
+    # 尝试使用 data_preparator (快速)
+    try:
+        from data_preparator import prepare_training_data
+        result = prepare_training_data()
+
+        # 检查是否成功
+        if "✅" in result:
+            return f"✅ 预处理成功（快速路径）！\n{result}\n\n现在可以调用 train_mlp_model 进行训练了。"
+        elif "❌" in result:
+            # 所有优先级都失败了，使用兜底方案
+            pass
+        else:
+            return f"✅ 预处理成功！\n{result}\n\n现在可以调用 train_mlp_model 进行训练了。"
+    except Exception as e:
+        print(f"data_preparator 调用失败，使用兜底方案: {e}")
+
+    # 兜底方案: 使用 log_preprocessor.py 本地解析（最慢但最可靠）
     if not log_file or os.path.basename(log_file) == log_file:
         log_file = os.path.join(HDFS_BASE_DIR, "HDFS.log")
 
@@ -107,11 +129,11 @@ def preprocess_hdfs_logs(log_file: str = None) -> str:
         preprocessor.load_templates(template_file)
         preprocessor.preprocess_log(log_file, matrix_file)
 
-        return f"预处理成功！已生成特征矩阵文件：{matrix_file}。现在可以调用 train_mlp_model 进行训练了。"
+        return f"✅ 预处理成功（兜底方案）！已生成特征矩阵文件：{matrix_file}。现在可以调用 train_mlp_model 进行训练了。"
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return f"预处理失败，请检查原始日志格式: {str(e)}"
+        return f"❌ 预处理最终失败: {str(e)}"
 
 
 @tool(description="第二步：使用'Event_occurrence_matrix.csv'训练MLP模型。")
@@ -124,7 +146,8 @@ def train_mlp_model(epochs: int = 50) -> str:
     try:
         from model.mlp_model import train_mlp
 
-        model_out = get_abs_path("LogMLP_Model.pth")
+        # model_out = get_abs_path("LogMLP_Model.pth")
+        model_out = get_abs_path("block_anomaly_model.pkl")
         scaler_out = get_abs_path("scaler.pkl")
 
         model_path, scaler_path, f1 = train_mlp(
@@ -145,73 +168,86 @@ def train_mlp_model(epochs: int = 50) -> str:
 def detect_anomaly(threshold: float = 0.3) -> str:
     """
     核心异常检测工具。
-    不需要传入文件路径，内部会自动寻找预处理好的 Event_occurrence_matrix.csv。
+    使用 sklearn 的 MLPClassifier 模型 (block_anomaly_model.pkl)
     """
-    # 1. 强制路径锁定 - 确保只读取预处理后的矩阵文件
-    matrix_file = os.path.join(HDFS_BASE_DIR, "preprocessed", "Event_occurrence_matrix.csv")
-    model_path = get_abs_path("LogMLP_Model.pth")
-    scaler_path = get_abs_path("scaler.pkl")
+    # 1. 强制路径锁定
+    matrix_file = os.path.join(TOOLS_DIR, "training_data.csv")
+    model_path = os.path.join(TOOLS_DIR, "block_anomaly_model.pkl")
+    scaler_path = os.path.join(TOOLS_DIR, "scaler.pkl")
     template_file = os.path.join(HDFS_BASE_DIR, "preprocessed", "HDFS.log_templates.csv")
 
-    # 2. 物理检查：如果文件缺失，明确告知 Agent，触发它的补救逻辑（如：去训练模型）
+    # 2. 物理检查
     if not os.path.exists(matrix_file):
-        return "检测中断：特征矩阵(Event_occurrence_matrix.csv)不存在。请先执行 preprocess_hdfs_logs 预处理日志。"
+        return "检测中断：特征矩阵(training_data.csv)不存在。请先执行 preprocess_hdfs_logs 预处理日志。"
     if not os.path.exists(model_path):
-        return "检测中断：模型文件(LogMLP_Model.pth)缺失。请先执行 train_mlp_model 训练模型。"
+        return "检测中断：模型文件(block_anomaly_model.pkl)缺失。请先执行 train_mlp_model 训练模型。"
+    if not os.path.exists(scaler_path):
+        return "检测中断：标准化器(scaler.pkl)缺失。请先执行 train_mlp_model 训练模型。"
 
     try:
         import joblib
-        import torch
         import pandas as pd
-        from model.mlp_model import load_mlp_model, detect_anomalies
 
-        # 3. 设备自适应：自动检测显卡还是CPU
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # 3. 加载数据
+        df = pd.read_csv(matrix_file)
+        feature_cols = [f'E{i}' for i in range(1, 30)]
+        X = df[feature_cols].fillna(0)
 
-        # 4. 加载数据以确定输入维度
-        data = pd.read_csv(matrix_file)
-        # 特征从第4列开始（跳过 BlockId, Label, IP等非特征列）
-        input_dim = data.shape[1] - 3
-
-        # 5. 加载模型并推送到正确设备
-        model = load_mlp_model(model_path, input_dim)
-        model.to(device)
-        model.eval()
-
-        # 6. 加载标准化器
+        # 4. 加载 sklearn 模型和标准化器
+        model = joblib.load(model_path)
         scaler = joblib.load(scaler_path)
 
-        # 7. 调用推理函数（此时传入的是处理好的矩阵路径）
-        results = detect_anomalies(
-            model=model,
-            scaler=scaler,
-            data_file=matrix_file,
-            threshold=threshold,
-            template_file=template_file
-        )
+        # 5. 预测
+        X_scaled = scaler.transform(X)
+        preds = model.predict(X_scaled)
+        probs = model.predict_proba(X_scaled)[:, 1]  #异常概率
 
-        # 8. 结果摘要处理 - 防止返回给 Agent 的文本过长导致 API 报错 (400 Overlarge)
-        total_anomalies = len(results)
+        # 6. 整理结果
+        df['prediction'] = ['Fail' if p == 1 else 'Success' for p in preds]
+        df['anomaly_prob'] = probs
+
+        anomalies = df[df['prediction'] == 'Fail'].sort_values('anomaly_prob', ascending=False)
+        total_anomalies = len(anomalies)
+
         if total_anomalies == 0:
-            return f"检测完成：在 {len(data)} 条记录中未发现异常（当前阈值 {threshold}）。系统状态正常。"
+            return f"检测完成：在 {len(df)} 条记录中未发现异常（当前阈值 {threshold}）。系统状态正常。"
 
-        # 构建精简版报告
-        output = f"### 🔍 异常检测摘要报告\n"
-        output += f"- **总检测块数**: {len(data)}\n"
+        # ===== 自动查询解决方案 =====
+        anomaly_blocks = anomalies.head(10)
+        solutions = []
+
+        for _, row in anomaly_blocks.iterrows():
+            block_id = row['BlockId']
+            # 调用 rag_retrieve 获取解决方案
+            try:
+                from agent_tools import rag_retrieve
+                solution = rag_retrieve.invoke(f"HDFS BlockId {block_id} 异常解决方案")
+            except:
+                solution = "未找到解决方案"
+
+            solutions.append({
+                'block_id': block_id,
+                'probability': row['anomaly_prob'],
+                'label': row['Label'],
+                'solution': solution
+            })
+
+        # 构建完整报告
+        output = f"### 🔍 异常检测摘要报告\n\n"
+        output += f"- **总检测块数**: {len(df)}\n"
         output += f"- **发现异常块**: {total_anomalies}\n"
-        output += f"- **异常比例**: {(total_anomalies / len(data)):.2%}\n"
+        output += f"- **异常比例**: {(total_anomalies / len(df)):.2%}\n"
         output += f"- **当前判定阈值**: {threshold}\n"
-        output += f"\n---\n"
-        output += f"#### 典型异常案例 (仅展示前 10 条高危项目):\n"
+        output += f"\n---\n\n"
+        output += f"#### 🚨 前 10 条高危异常及解决方案:\n\n"
 
-        # 只展示前 10 个异常，避免消息体过大
-        for r in results[:10]:
-            output += f"\n**BlockID**: `{r['block_id']}` | **异常概率**: `{r['probability']:.4f}`\n"
-            for event in r['events']:
-                output += f"  - 事件 `{event['event_id']}`: {event['template']} (发生 {event['count']} 次)\n"
+        for i, s in enumerate(solutions, 1):
+            output += f"**{i}. BlockID**: `{s['block_id']}` | **异常概率**: `{s['probability']:.4f}` | **标签**: {s['label']}\n"
+            output += f"**解决方案**: {s['solution']}\n\n"
 
         if total_anomalies > 10:
-            output += f"\n> **提示**: 还有 {total_anomalies - 10} 条异常记录未在此列出。您可以尝试调高阈值来过滤更严重的错误。"
+            output += f"---\n\n"
+            output += f"> **提示**: 还有 {total_anomalies - 10} 条异常记录未在此列出。您可以继续询问解决方案。"
 
         return output
 

@@ -104,11 +104,8 @@
 → **必须执行以下步骤，禁止询问用户！**
 
 #### 步骤1：检查模型文件是否存在
-
-- 检查 `block_anomaly_model.pkl` 是否存在于 `agent/tools` 目录（优先）或 `Test_kraft_connect/Fix_File` 目录
-- 检查 `scaler.pkl` 是否存在于 `agent/tools` 目录（优先）或 `Test_kraft_connect/Fix_File` 目录
-- 检查 `training_data.csv` 是否存在于 `agent/tools` 目录（优先）或 `Test_kraft_connect/Fix_File` 目录
-
+- 检查 `LogMLP_Model.pth` 是否存在于项目根目录
+- 检查 `scaler.pkl` 是否存在于项目根目录
 
 #### 步骤2：如果文件存在
 → **直接执行 detect_anomaly 函数！**
@@ -134,8 +131,7 @@
 - 已知文件路径：
 - **已知文件路径**：
 
-  - 矩阵文件: `HDFS_v1/preprocessed/Event_occurrence_matrix.csv`（优先）或 `Test_kraft_connect/Train_Event/training_data.csv`
-  - sklearn模型: `block_anomaly_model.pkl`（优先）或 `Test_kraft_connect/Train_Event/block_anomaly_model.pkl`
-  - 标准化器: `scaler.pkl`（优先）或 `Test_kraft_connect/Train_Event/scaler.pkl`
+  - 矩阵文件: `HDFS_v1/preprocessed/Event_occurrence_matrix.csv`
+  - 模型文件: `LogMLP_Model.pth`
 
   - 模板文件: `HDFS_v1/preprocessed/HDFS.log_templates.csv`

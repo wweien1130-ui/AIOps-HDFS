@@ -3,7 +3,7 @@
 import os
 import shutil
 import pandas as pd
-from langchain_core.tools import tool
+# from langchain_core.tools import tool
 
 # 预设的备份目录 (Ubuntu 路径)
 BACKUP_DIR = "/root/backup"
@@ -12,7 +12,7 @@ BACKUP_DIR = "/root/backup"
 LOCAL_DIR = os.path.abspath(os.path.dirname(__file__))
 
 
-@tool(description="准备训练数据，检查并复制必要文件到本地")
+# @tool(description="准备训练数据，检查并复制必要文件到本地")
 def prepare_training_data() -> str:
     """
     多级降级策略：
