@@ -3,10 +3,11 @@
 import os
 import shutil
 import pandas as pd
+
 # from langchain_core.tools import tool
 
-# 预设的备份目录 (Ubuntu 路径)
-BACKUP_DIR = "/root/backup"
+# 预设的备份目录 (Windows 路径)
+BACKUP_DIR = "BackUp/File"
 
 # 本地目标目录
 LOCAL_DIR = os.path.abspath(os.path.dirname(__file__))

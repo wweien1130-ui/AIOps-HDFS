@@ -131,11 +131,23 @@
 
 - **当用户说"检测异常"时，必须直接执行 detect_anomaly，禁止询问用户！**
 - 不要每次都重新训练模型
-- 已知文件路径：
+
+
+
 - **已知文件路径**：
-
-  - 矩阵文件: `HDFS_v1/preprocessed/Event_occurrence_matrix.csv`（优先）或 `Test_kraft_connect/Train_Event/training_data.csv`
-  - sklearn模型: `block_anomaly_model.pkl`（优先）或 `Test_kraft_connect/Train_Event/block_anomaly_model.pkl`
-  - 标准化器: `scaler.pkl`（优先）或 `Test_kraft_connect/Train_Event/scaler.pkl`
-
+  - 矩阵文件: `agent/tools/training_data.csv`（优先）或 `Test_kraft_connect/Fix_File/training_data.csv`
+  - sklearn模型: `agent/tools/block_anomaly_model.pkl`（优先）或 `Test_kraft_connect/Fix_File/block_anomaly_model.pkl`
+  - 标准化器: `agent/tools/scaler.pkl`（优先）或 `Test_kraft_connect/Fix_File/scaler.pkl`
   - 模板文件: `HDFS_v1/preprocessed/HDFS.log_templates.csv`
+
+### 场景1：预处理数据（多级降级策略）
+如果需要预处理，按以下优先级执行：
+**开头提醒**: 请先检查已知文件路径，确认是否存在。
+
+**开头提醒**: 如果文件不存在，再按以下优先级执行。
+**优先级1**: 从备份目录复制官方 `Event_occurrence_matrix.csv`
+**优先级2**: 从备份目录复制 `training_data.csv`
+**优先级3**: 从备份目录复制 `block_features.csv` + `Event.csv` 并合并生成 `training_data.csv`
+**兜底方案**: 使用 `log_preprocessor.py` 本地解析日志文件（最慢但最可靠）
+
+注意：`preprocess_hdfs_logs` 会自动按优先级检查并复制文件。

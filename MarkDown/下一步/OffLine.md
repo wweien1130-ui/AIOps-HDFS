@@ -1,101 +1,33 @@
+# 离线批处理模块
 
-# 离线：
-## kafka: 
-- 将数据发送给hdfs-logs-offline
-## clickhouse: 
-- 创建对应于hdfs-logs-offline的3表+2视图
+## 3.1 Kafka Topic
 
-### -- 离线表
-```shell
-CREATE TABLE offline.hdfs_logs ...;
-CREATE TABLE offline.block_event_stats ...;
-```
+**名称**：`hdfs-logs-offline`
 
+**消息格式**：`batch_id\t原始日志行`，其中 `batch_id` 为文件上传开始时的 Unix 时间戳（同一个文件内固定）。
 
+## 3.2 ClickHouse 离线库 (offline)
 
-<!-- ### 结合时间分区和批次标记（推荐）
-对于离线批量上传，你可以：
-```
-在上传文件时，生成一个唯一的 batch_id（如文件上传开始的 Unix 时间戳）。
+### 3.2.1 创建数据库
 
-在 ClickHouse 中创建按日期分区 + 按 batch_id 排序的表。
-
-导出 CSV 时，使用 WHERE batch_id = 指定值 过滤。
-
-导出完成后，删除该批次的分区或数据。
-```
-
-
-示例表结构：
-```shell
 ```sql
-CREATE TABLE hdfs_logs (
-    batch_id UInt64,
-    raw_log String,
-    _timestamp DateTime DEFAULT now()
-) ENGINE = MergeTree()
-PARTITION BY toYYYYMMDD(_timestamp)   -- 按天分区，便于整体清理
-ORDER BY (batch_id, _timestamp);
-这样既可以利用分区快速删除整批数据，又可以用 batch_id 精确查询。
-``` -->
-
-
-### 并发上传多个日志：
-- 1.使用 UUID（推荐，最简单）
-```bash
-import uuid
-batch_id = str(uuid.uuid4())   # 例如 '550e8400-e29b-41d4-a716-446655440000'
+CREATE DATABASE IF NOT EXISTS offline;
 ```
 
-- 2.为每个文件生成唯一的 batch_id（例如不同的时间戳或递增序号）。
+### 3.2.2 Kafka 引擎表
 
-- 3.生产者发送时，为每条日志添加该文件的 batch_id。
-
-- 4.ClickHouse 中存储 batch_id 列。
-
-- 5.导出时，对每个 batch_id 分别执行 SELECT ... WHERE batch_id = ... INTO OUTFILE。
-
-这样三个文件的数据在 Kafka 和 ClickHouse 中虽然混合存储，但通过 batch_id 严格隔离，导出时互不干扰。
-```
-时间戳（微秒）：batch_id = int(time.time() * 1000000)，保证不同文件 ID 不同。
-
-文件名哈希 + 时间戳：batch_id = hash(filename) ^ timestamp。
-
+```sql
+CREATE TABLE offline.kafka_hdfs_logs (
+    raw_log String
+) ENGINE = Kafka
+SETTINGS kafka_broker_list = '192.168.115.129:9092',
+         kafka_topic_list = 'hdfs-logs-offline',
+         kafka_group_name = 'clickhouse_offline_consumer',
+         kafka_format = 'RawBLOB';
 ```
 
-### 1.全局递增计数器（需持久化存储，如 Redis、文件）。
-```shell
-import time
-batch_id_1 = int(time.time() * 1000)        # 毫秒级时间戳，例如 1713379200000
-batch_id_2 = batch_id_1 + 1                # 简单递增（确保唯一）
-batch_id_3 = batch_id_1 + 2
-```
+### 3.2.3 原始日志表（带 batch_id）
 
-### 2.生产者：为每条日志添加 batch_id
-- 对每个文件，创建独立的生产者循环，发送时拼接 batch_id 和日志行。
-```python
-def send_file(file_path, batch_id):
-    with open(file_path, 'r') as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            message = f"{batch_id}\t{line}"
-            producer.send('hdfs-logs-offline', value=message)
-    producer.flush()
-```
-- 然后并发调用（使用线程或异步）
-```python
-from threading import Thread
-
-Thread(target=send_file, args=('file1.log', batch_id_1)).start()
-Thread(target=send_file, args=('file2.log', batch_id_2)).start()
-Thread(target=send_file, args=('file3.log', batch_id_3)).start()
-```
-- 注意：同一个 Kafka topic 可以混合三个文件的消息，因为 batch_id 会区分它们。
-
-### 3. ClickHouse 表结构
-- 确保 offline.hdfs_logs 和 offline.block_event_stats 都包含 batch_id 列
 ```sql
 CREATE TABLE offline.hdfs_logs (
     batch_id UInt64,
@@ -104,7 +36,21 @@ CREATE TABLE offline.hdfs_logs (
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMMDD(_timestamp)
 ORDER BY (batch_id, _timestamp);
+```
 
+### 3.2.4 物化视图：拆分 batch_id 和日志内容
+
+```sql
+CREATE MATERIALIZED VIEW offline.mv_hdfs_logs TO offline.hdfs_logs AS
+SELECT 
+    toUInt64(splitByChar('\t', raw_log)[1]) AS batch_id,
+    splitByChar('\t', raw_log)[2] AS raw_log
+FROM offline.kafka_hdfs_logs;
+```
+
+### 3.2.5 统计表（带 batch_id）
+
+```sql
 CREATE TABLE offline.block_event_stats (
     batch_id UInt64,
     block_id String,
@@ -115,40 +61,122 @@ CREATE TABLE offline.block_event_stats (
 PARTITION BY toYYYYMMDD(last_updated)
 ORDER BY (batch_id, block_id, event_id);
 ```
-- 物化视图解析消息时，提取 batch_id 和 raw_log：
+
+### 3.2.6 统计物化视图（提取事件，传递 batch_id）
 
 ```sql
-CREATE MATERIALIZED VIEW mv_offline_hdfs_logs TO offline.hdfs_logs AS
+CREATE MATERIALIZED VIEW offline.mv_block_stats TO offline.block_event_stats AS
 SELECT 
-    toUInt64(splitByChar('\t', raw_log)[1]) AS batch_id,
-    splitByChar('\t', raw_log)[2] AS raw_log
-FROM kafka_hdfs_logs_offline;
+    batch_id,
+    extract(raw_log, '(blk[-_]?-?\\d+)') AS block_id,
+    CASE 
+        WHEN raw_log LIKE '%Adding an already existing block%' THEN 'E1'
+        WHEN raw_log LIKE '%Verification succeeded for%' THEN 'E2'
+        -- ... 其余 27 个 WHEN 条件（同在线）...
+        ELSE NULL
+    END AS event_id,
+    1 AS cnt
+FROM offline.hdfs_logs
+WHERE block_id != '' AND event_id IS NOT NULL;
 ```
-### 4. 分别导出三个 CSV 文件
 
-- 对每个 batch_id，执行导出命令（可以用脚本循环）：
+### 3.2.7 离线异常结果表（带 batch_id，长期保留）
 
-``` bash
-for BATCH_ID in 1713379200000 1713379200001 1713379200002; do
-    docker exec -it clickhouse-server clickhouse-client \
-        --query "SELECT raw_log FROM offline.hdfs_logs WHERE batch_id = $BATCH_ID FORMAT CSV" \
-        > "file_${BATCH_ID}.csv"
-done
+```sql
+CREATE TABLE offline.anomaly_blocks (
+    batch_id UInt64,
+    block_id String,
+    E1 Int32, E2 Int32, E3 Int32, E4 Int32, E5 Int32,
+    E6 Int32, E7 Int32, E8 Int32, E9 Int32, E10 Int32,
+    E11 Int32, E12 Int32, E13 Int32, E14 Int32, E15 Int32,
+    E16 Int32, E17 Int32, E18 Int32, E19 Int32, E20 Int32,
+    E21 Int32, E22 Int32, E23 Int32, E24 Int32, E25 Int32,
+    E26 Int32, E27 Int32, E28 Int32, E29 Int32,
+    anomaly_score Float32,
+    detected_at DateTime DEFAULT now()
+) ENGINE = ReplacingMergeTree(detected_at)
+ORDER BY (batch_id, block_id);
 ```
-- 如果导出的是统计结果（每个 BlockId 的事件频次）：
-``` bash
-docker exec -it clickhouse-server clickhouse-client \
-    --query "SELECT block_id, event_id, sum(cnt) FROM offline.block_event_stats WHERE batch_id = $BATCH_ID GROUP BY block_id, event_id FORMAT CSV" \
-    > "stats_${BATCH_ID}.csv"
-```
-### 5. 导出后清理（可选）
 
-- 导出完成后，可以删除对应 batch_id 的数据：
+## 3.3 离线处理流程
+
+### 3.3.1 数据流入
+
+生产者读取文件，为每行添加相同的 `batch_id`（如 `1700000000`），发送到 `hdfs-logs-offline`。
+
+ClickHouse 自动消费并填充 `offline.hdfs_logs` 和 `offline.block_event_stats`。
+
+### 3.3.2 离线预测脚本（每小时或按批次触发）
+
+```python
+import clickhouse_connect
+import pandas as pd
+import joblib
+
+client = clickhouse_connect.get_client(host='localhost', port=9000, username='default', password='')
+model = joblib.load('block_anomaly_model.pkl')
+scaler = joblib.load('scaler.pkl')
+
+# 获取未处理的 batch_id（例如从记录表或直接扫描）
+query_batches = """
+SELECT DISTINCT batch_id
+FROM offline.block_event_stats
+WHERE batch_id NOT IN (SELECT DISTINCT batch_id FROM offline.anomaly_blocks)
+"""
+batches = client.query_df(query_batches)['batch_id'].tolist()
+
+for batch_id in batches:
+    # 获取该批次的所有 block 特征
+    query_features = f"""
+    SELECT 
+        block_id,
+        sumIf(cnt, event_id='E1') AS E1,
+        sumIf(cnt, event_id='E2') AS E2,
+        ...,
+        sumIf(cnt, event_id='E29') AS E29
+    FROM offline.block_event_stats
+    WHERE batch_id = {batch_id}
+    GROUP BY block_id
+    """
+    df = client.query_df(query_features)
+    if df.empty:
+        continue
+    X = df[[f'E{i}' for i in range(1,30)]].fillna(0)
+    X_scaled = scaler.transform(X)
+    scores = model.predict_proba(X_scaled)[:, 1]
+    anomalies = []
+    for idx, row in df.iterrows():
+        if scores[idx] > 0.5:
+            row_dict = {
+                'batch_id': batch_id,
+                'block_id': row['block_id'],
+                **{f'E{i}': row[f'E{i}'] for i in range(1,30)},
+                'anomaly_score': scores[idx]
+            }
+            anomalies.append(row_dict)
+    if anomalies:
+        client.insert_df('offline.anomaly_blocks', pd.DataFrame(anomalies))
+```
+
+### 3.3.3 导出 CSV 并清理（按批次）
+
 ```bash
-ALTER TABLE offline.hdfs_logs DELETE WHERE batch_id IN (1713379200000, 1713379200001, 1713379200002);
-ALTER TABLE offline.block_event_stats DELETE WHERE batch_id IN (...);
+#!/bin/bash
+BATCH_ID=$1   # 从外部传入，如 1700000000
+
+clickhouse-client --query "
+SELECT block_id, E1, E2, ..., E29, anomaly_score
+FROM offline.anomaly_blocks FINAL
+WHERE batch_id = $BATCH_ID
+FORMAT CSV" > anomaly_batch_${BATCH_ID}.csv
+
+# 可选：删除该批次的所有数据
+clickhouse-client --query "ALTER TABLE offline.hdfs_logs DELETE WHERE batch_id = $BATCH_ID"
+clickhouse-client --query "ALTER TABLE offline.block_event_stats DELETE WHERE batch_id = $BATCH_ID"
+clickhouse-client --query "ALTER TABLE offline.anomaly_blocks DELETE WHERE batch_id = $BATCH_ID"
 ```
 
+## 3.4 定时任务建议
 
-
-
+- **预测脚本**：每小时运行一次，扫描未处理的 batch_id。
+- **导出/清理**：可在预测完成后立即执行，或单独调度。
