@@ -163,8 +163,10 @@ async def analyze_logs(request: AnalyzeRequest):
         data['prediction'] = ['Fail' if p == 1 else 'Success' for p in preds]
         data['anomaly_prob'] = probs
 
-        # 筛选异常
-        anomalies = data[data['prediction'] == 'Fail'].sort_values('anomaly_prob', ascending=False)
+        # 筛选异常 - 按E事件总数降序排序，这样能看到更多不同的E模式
+        anomalies = data[data['prediction'] == 'Fail'].copy()
+        anomalies['total_events'] = anomalies[[f'E{i}' for i in range(1, 30)]].sum(axis=1)
+        anomalies = anomalies.sort_values('total_events', ascending=False)
 
         total_blocks = len(data)
         anomaly_count = len(anomalies)
@@ -177,6 +179,14 @@ async def analyze_logs(request: AnalyzeRequest):
                 col = f'E{i}'
                 if col in row:
                     event_distribution[col] += int(row[col])
+
+        # 打印前10个异常块的实际E值
+        print(f"[api/analyze] 前10个异常的E值(按概率排序):")
+        for idx, (_, row) in enumerate(anomalies.head(10).iterrows()):
+            e5 = row.get('E5', 0)
+            e9 = row.get('E9', 0)
+            prob = row.get('anomaly_prob', 0)
+            print(f"  [{idx}] Block={row.get('BlockId')}, prob={prob:.4f}, E5={e5}, E9={e9}, E11={row.get('E11', 0)}")
 
         # 返回前10个异常，包含E事件详情
         top_anomalies = []
