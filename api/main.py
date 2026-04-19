@@ -51,10 +51,10 @@ async def startup_event():
 
     print("🚀 正在加载模型和数据，请稍候...")
 
-    matrix_file = get_abs_path("HDFS_v1/preprocessed/Event_occurrence_matrix.csv")
+    matrix_file = get_abs_path("BackUp/File/Event_occurrence_matrix.csv")
     model_path = get_abs_path("LogMLP_Model.pth")
-    scaler_path = get_abs_path("scaler.pkl")
-    template_file = get_abs_path("HDFS_v1/preprocessed/HDFS.log_templates.csv")
+    scaler_path = get_abs_path("BackUp/Preprocess_File/scaler.pkl")
+    template_file = get_abs_path("BackUp/File/HDFS.log_templates.csv")
 
     try:
         # 加载特征矩阵（必须）
@@ -126,9 +126,9 @@ async def analyze_logs(request: AnalyzeRequest):
     """
     import joblib
 
-    model_path = get_abs_path("block_anomaly_model.pkl")
-    scaler_path = get_abs_path("scaler.pkl")
-    matrix_file = get_abs_path("HDFS_v1/preprocessed/Event_occurrence_matrix.csv")
+    model_path = get_abs_path("BackUp/Preprocess_File/block_anomaly_model.pkl")
+    scaler_path = get_abs_path("BackUp/Preprocess_File/scaler.pkl")
+    matrix_file = get_abs_path("BackUp/File/Event_occurrence_matrix.csv")
 
     # 如果模型不存在，自动训练
     if not os.path.exists(model_path) or not os.path.exists(scaler_path):
@@ -200,7 +200,7 @@ async def analyze_logs(request: AnalyzeRequest):
             # 按count降序排列
             events.sort(key=lambda x: x['count'], reverse=True)
             print(f"[api/analyze] 事件: {events[:5]}")
-            
+
             top_anomalies.append({
                 'block_id': row.get('BlockId', ''),
                 'probability': float(row['anomaly_prob']),
@@ -319,29 +319,175 @@ if __name__ == "__main__":
 @app.post("/api/upload")
 async def upload_log_file(file: UploadFile = File(...)):
     """
-    上传原始日志文件，进行预处理和检测
+    上传原始日志文件：
+    - CSV文件：发送到Kafka offline topic
+    - 其他文件：直接保存
     """
-    import tempfile
-    import shutil
+    import yaml
+    import time
+    import json
+    import pandas as pd
+    from io import StringIO
+    from kafka import KafkaProducer
 
-    # 保存上传的文件
+    # 读取Kafka配置
+    config_dir = get_abs_path("config")
+    kafka_config_path = os.path.join(config_dir, "kafka.yml")
+    with open(kafka_config_path, 'r') as f:
+        kafka_config = yaml.safe_load(f)['kafka']
+
     upload_dir = get_abs_path("HDFS_v1")
     os.makedirs(upload_dir, exist_ok=True)
-
     file_path = os.path.join(upload_dir, file.filename)
 
     try:
         contents = await file.read()
-        with open(file_path, 'wb') as f:
-            f.write(contents)
+        filename_lower = file.filename.lower()
 
-        return {
-            "success": True,
-            "message": f"文件 {file.filename} 上传成功",
-            "file_path": file_path
-        }
+        if filename_lower.endswith('.csv'):
+            # CSV: 发送到Kafka offline topic
+            df = pd.read_csv(StringIO(contents.decode('utf-8')))
+            batch_id = str(int(time.time()))
+
+            producer = KafkaProducer(
+                bootstrap_servers=kafka_config['bootstrap_servers'],
+                value_serializer=lambda v: json.dumps(v).encode('utf-8'),
+                acks=1
+            )
+            topic = kafka_config['topics'].get('offline', 'hdfs-logs-offline')
+
+            print(f"[Upload] Kafka连接: {kafka_config['bootstrap_servers']}, Topic: {topic}")
+            print(f"[Upload] 开始发送 {len(df)} 条记录...")
+
+
+            for _, row in df.iterrows():
+                record = {'batch_id': batch_id, 'block_id': str(row.get('BlockId', row.get('block_id', '')))}
+                for i in range(1, 30):
+                    e_col = f'E{i}'
+                    if e_col in row:
+                        record[e_col] = int(row[e_col])
+                producer.send(topic, value=record)
+
+            producer.flush()
+            print(f"[Upload] 发送完成")
+            producer.close()
+
+            return {
+                "success": True,
+                "message": f"CSV已发送到Kafka，批次: {batch_id}，共 {len(df)} 条",
+                "batch_id": batch_id,
+                "total_rows": len(df),
+                "topic": topic
+            }
+        else:
+            # 文本文件：直接发送到Kafka
+            text_content = contents.decode('utf-8')
+            batch_id = str(int(time.time()))
+
+            producer = KafkaProducer(
+                bootstrap_servers=kafka_config['bootstrap_servers'],
+                value_serializer=lambda v: v.encode('utf-8'),
+                acks=1
+            )
+
+            topic = kafka_config['topics'].get('offline', 'hdfs-logs-offline')
+            print(f"[Upload] 文本文件发送到Kafka: {kafka_config['bootstrap_servers']}, Topic: {topic}")
+
+            # 逐行发送到Kafka，格式：batch_id\t日志内容
+            lines = text_content.strip().split('\n')
+            for line in lines:
+                if line.strip():
+                    # 添加batch_id前缀，方便ClickHouse提取
+                    message = f"{batch_id}\t{line}"
+                    producer.send(topic, value=message)
+
+            producer.flush()
+            print(f"[Upload] 文本发送完成，共 {len(lines)} 行")
+            producer.close()
+
+            return {
+                "success": True,
+                "message": f"文本文件已发送到Kafka，批次: {batch_id}，共 {len(lines)} 行",
+                "batch_id": batch_id,
+                "total_rows": len(lines),
+                "topic": topic
+            }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"上传失败: {str(e)}")
+
+
+@app.get("/api/offline/batches")
+async def get_offline_batches():
+    """
+    获取所有离线批次列表
+    """
+    import yaml
+    import clickhouse_connect
+
+    config_dir = get_abs_path("config")
+    ch_config_path = os.path.join(config_dir, "clickhouse.yaml")
+    with open(ch_config_path, 'r') as f:
+        ch_config = yaml.safe_load(f)['clickhouse']['offline']
+
+    try:
+        client = clickhouse_connect.get_client(
+            host=ch_config['host'],
+            port=ch_config['port'],
+            username=ch_config.get('username', 'default'),
+            password=ch_config.get('password', '')
+        )
+
+        # 查询所有批次
+        query = """
+        SELECT batch_id, count() as block_count, min(detected_at) as first_seen, max(detected_at) as last_seen
+        FROM offline.block_event_stats
+        GROUP BY batch_id
+        ORDER BY batch_id DESC
+        LIMIT 20
+        """
+        result = client.query_df(query)
+        batches = result.to_dict('records')
+
+        # 查询每个批次的异常数量
+        anomaly_query = """
+        SELECT batch_id, count() as anomaly_count
+        FROM offline.anomaly_blocks
+        GROUP BY batch_id
+        """
+        anomaly_result = client.query_df(anomaly_query)
+        anomaly_counts = dict(zip(anomaly_result['batch_id'], anomaly_result['anomaly_count']))
+
+        for b in batches:
+            b['anomaly_count'] = anomaly_counts.get(b['batch_id'], 0)
+
+        return {"success": True, "batches": batches}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"查询失败: {str(e)}")
+
+
+@app.post("/api/offline/process/{batch_id}")
+async def process_offline_batch(batch_id: str):
+    """
+    处理指定batch_id的离线数据（运行预测）
+    """
+    import subprocess
+    import threading
+
+    def run_predictor():
+        try:
+            # 调用离线预测脚本
+            script_path = get_abs_path("scripts/offline/predictor.py")
+            subprocess.run(['python', script_path], check=True)
+        except Exception as e:
+            print(f"离线预测失败: {e}")
+
+    # 异步执行
+    threading.Thread(target=run_predictor, daemon=True).start()
+
+    return {
+        "success": True,
+        "message": f"开始处理批次 {batch_id}，请稍后查询结果"
+    }
 
 
 @app.get("/api/export")

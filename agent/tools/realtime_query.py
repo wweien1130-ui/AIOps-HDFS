@@ -14,12 +14,12 @@ def load_config():
 
     ch_path = os.path.join(config_dir, 'clickhouse.yaml')
     if os.path.exists(ch_path):
-        with open(ch_path, 'r') as f:
+        with open(ch_path, 'r', encoding='utf-8') as f:
             config['clickhouse'] = yaml.safe_load(f)['clickhouse']['online']
 
     redis_path = os.path.join(config_dir, 'redis.yaml')
     if os.path.exists(redis_path):
-        with open(redis_path, 'r') as f:
+        with open(redis_path, 'r', encoding='utf-8') as f:
             config['redis'] = yaml.safe_load(f)['redis']
 
     return config

@@ -7,10 +7,16 @@ import pandas as pd
 # from langchain_core.tools import tool
 
 # 预设的备份目录 (Windows 路径)
-BACKUP_DIR = "BackUp/File"
+BACKUP_DIR = "HDFS_v1/preprocessed"
 
 # 本地目标目录
-LOCAL_DIR = os.path.abspath(os.path.dirname(__file__))
+# LOCAL_DIR = os.path.abspath(os.path.dirname(__file__))
+# 获取当前 data_preparator.py 所在的目录
+# 即: E:\private_project\AI_application\agent\tools
+from utils.path_tool import get_abs_path
+
+LOCAL_DIR = get_abs_path("BackUp")
+
 
 
 # @tool(description="准备训练数据，检查并复制必要文件到本地")

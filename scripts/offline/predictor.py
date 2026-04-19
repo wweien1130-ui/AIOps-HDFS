@@ -3,31 +3,70 @@ import pandas as pd
 import joblib
 import yaml
 import os
+import sys
 
 config_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'config')
 
-with open(os.path.join(config_dir, 'clickhouse.yaml'), 'r') as f:
+with open(os.path.join(config_dir, 'clickhouse.yaml'), 'r', encoding='utf-8') as f:
     ch_config = yaml.safe_load(f)['clickhouse']['offline']
 client = clickhouse_connect.get_client(
     host=ch_config['host'],
-    port=ch_config['port'],
+    port=ch_config.get('http_port', 8123),
     username=ch_config.get('username', 'default'),
     password=ch_config.get('password', '')
 )
 
+# 支持从命令行参数或环境变量获取batch_id
+batch_id_arg = sys.argv[1] if len(sys.argv) > 1 else os.environ.get('OFFLINE_BATCH_ID')
+
+# 获取项目路径
 script_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(os.path.dirname(script_dir))
-model = joblib.load(os.path.join(project_root, 'agent', 'tools', 'block_anomaly_model.pkl'))
-scaler = joblib.load(os.path.join(project_root, 'agent', 'tools', 'scaler.pkl'))
 
-query_batches = """
-SELECT DISTINCT batch_id
-FROM offline.block_event_stats
-WHERE batch_id NOT IN (SELECT DISTINCT batch_id FROM offline.anomaly_blocks)
-"""
-batches = client.query_df(query_batches)['batch_id'].tolist()
+# 尝试多个可能的模型路径
+possible_model_paths = [
+    os.path.join(project_root, 'agent', 'tools', 'block_anomaly_model.pkl'),
+    os.path.join(project_root, 'BackUp', 'Preprocess_File', 'block_anomaly_model.pkl'),
+    os.path.join(project_root, 'block_anomaly_model.pkl'),
+]
+model_path = None
+for p in possible_model_paths:
+    if os.path.exists(p):
+        model_path = p
+        break
 
-for batch_id in batches:
+possible_scaler_paths = [
+    os.path.join(project_root, 'agent', 'tools', 'scaler.pkl'),
+    os.path.join(project_root, 'BackUp', 'Preprocess_File', 'scaler.pkl'),
+    os.path.join(project_root, 'scaler.pkl'),
+]
+scaler_path = None
+for p in possible_scaler_paths:
+    if os.path.exists(p):
+        scaler_path = p
+        break
+
+if not model_path or not scaler_path:
+    print(f"❌ 模型文件不存在！")
+    print(f"模型路径: {possible_model_paths}")
+    sys.exit(1)
+
+model = joblib.load(model_path)
+scaler = joblib.load(scaler_path)
+
+if batch_id_arg:
+    # 处理指定batch_id
+    batch_ids = [batch_id_arg]
+else:
+    # 查询所有未处理的批次
+    query_batches = """
+    SELECT DISTINCT batch_id
+    FROM offline.block_event_stats
+    WHERE batch_id NOT IN (SELECT DISTINCT batch_id FROM offline.anomaly_blocks)
+    """
+    batch_ids = client.query_df(query_batches)['batch_id'].tolist()
+
+for batch_id in batch_ids:
     query_features = f"""
     SELECT 
         block_id,

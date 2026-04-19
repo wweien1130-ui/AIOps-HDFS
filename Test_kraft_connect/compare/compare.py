@@ -1,8 +1,9 @@
 import pandas as pd
 
 # 文件路径
-yours = pd.read_csv('E:\BaiduNetdiskDownload\\block_features.csv')
-official = pd.read_csv('E:\\private_project\\AI_application\\HDFS_v1\\preprocessed\\Event_occurrence_matrix.csv')
+from utils.path_tool import get_abs_path
+yours = pd.read_csv(get_abs_path("BackUp/File/block_features.csv"))
+official = pd.read_csv(get_abs_path("BackUp/File/Event_occurrence_matrix.csv"))
 
 print(f"你的 block_features.csv block_id 数量: {len(yours)}")
 print(f"官方 Event_occurrence_matrix.csv block_id 数量: {len(official)}")

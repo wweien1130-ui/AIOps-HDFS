@@ -10,7 +10,8 @@ import matplotlib.pyplot as plt
 import joblib
 
 # 加载数据
-data = pd.read_csv('HDFS_v1/preprocessed/Event_occurrence_matrix.csv')
+from utils.path_tool import get_abs_path
+data = pd.read_csv(get_abs_path("BackUp/File/Event_occurrence_matrix.csv"))
 
 # 提取特征和标签
 X = data.iloc[:, 3:].values  # 从第4列开始是特征

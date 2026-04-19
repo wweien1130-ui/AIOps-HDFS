@@ -1,7 +1,8 @@
 import csv
 
-input_file = "E:\private_project\AI_application\HDFS_v1\preprocessed\Event_occurrence_matrix.csv"
-output_file = "Event.csv"
+from utils.path_tool import get_abs_path
+input_file = get_abs_path("BackUp/File/Event_occurrence_matrix.csv")
+output_file = get_abs_path("BackUp/File/Event.csv")
 
 with open(input_file, 'r', newline='', encoding='utf-8') as infile, \
      open(output_file, 'w', newline='', encoding='utf-8') as outfile:

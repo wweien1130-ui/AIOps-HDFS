@@ -2,7 +2,8 @@ from langchain.agents import create_agent
 from model.factory import chat_models
 from agent.tools.agent_tools import (
     rag_retrieve, get_current_time, calculate,
-    preprocess_hdfs_logs, train_mlp_model, detect_anomaly, check_model_readiness
+    preprocess_hdfs_logs, train_mlp_model, detect_anomaly, check_model_readiness,
+    list_offline_batches, process_offline_batch, get_realtime_anomalies
 )
 from utils.prompt_loader import load_system_prompts
 from utils.logger_handler import logger
@@ -19,7 +20,8 @@ class ReactAgent:
             system_prompt=load_system_prompts(),
             tools=[
                 rag_retrieve, get_current_time, calculate,
-                preprocess_hdfs_logs, train_mlp_model, detect_anomaly, check_model_readiness
+                preprocess_hdfs_logs, train_mlp_model, detect_anomaly, check_model_readiness,
+                list_offline_batches, process_offline_batch, get_realtime_anomalies
             ]
         )
         logger.info("[ReactAgent] Agent 初始化完成")
@@ -43,7 +45,7 @@ class ReactAgent:
                 latest_message = messages[-1]
                 if latest_message is None:
                     continue
-                
+
                 # 处理字典类型和对象类型
                 if isinstance(latest_message, dict):
                     msg_type = latest_message.get("type", None)

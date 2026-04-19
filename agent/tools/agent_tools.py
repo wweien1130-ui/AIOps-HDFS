@@ -13,7 +13,7 @@ if TOOLS_DIR not in sys.path:
 from utils.path_tool import get_abs_path
 
 KNOWLEDGE_DIR = get_abs_path("hdfs_knowledge")
-HDFS_BASE_DIR = get_abs_path("HDFS_v1")
+HDFS_BASE_DIR = get_abs_path("BackUp")
 
 # 从 data_preparator.py 导入 prepare_training_data（多级降级策略）
 from data_preparator import prepare_training_data
@@ -22,15 +22,91 @@ from data_preparator import prepare_training_data
 from realtime_query import query_realtime_anomalies
 
 
+@tool(description="处理离线批次：从ClickHouse查询指定batch_id的数据，进行异常检测")
+def process_offline_batch(batch_id: str) -> str:
+    """
+    处理离线批次数据：
+    1. 从ClickHouse的offline.block_event_stats查询指定batch_id
+    2. 用MLP模型预测异常
+    3. 结果存入offline.anomaly_blocks
+    """
+    import subprocess
+    import os
+
+    script_path = get_abs_path("scripts/offline/predictor.py")
+
+    if not os.path.exists(script_path):
+        return f"❌ 脚本不存在: {script_path}"
+
+    try:
+        # 设置环境变量传递batch_id
+        env = os.environ.copy()
+        env['OFFLINE_BATCH_ID'] = batch_id
+
+        result = subprocess.run(
+            ['python', script_path],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=300
+        )
+
+        if result.returncode == 0:
+            return f"✅ 批次 {batch_id} 处理完成！\n{result.stdout}"
+        else:
+            return f"❌ 处理失败: {result.stderr}"
+    except subprocess.TimeoutExpired:
+        return f"❌ 处理超时"
+    except Exception as e:
+        return f"❌ 执行失败: {str(e)}"
+
+
+@tool(description="查询所有离线批次列表")
+def list_offline_batches() -> str:
+    """查询ClickHouse中所有离线批次"""
+    import clickhouse_connect
+    import yaml
+
+    config_dir = get_abs_path("config")
+    ch_config_path = os.path.join(config_dir, "clickhouse.yaml")
+    with open(ch_config_path, 'r', encoding='utf-8') as f:
+        ch_config = yaml.safe_load(f)['clickhouse']['offline']
+
+    client = clickhouse_connect.get_client(
+        host=ch_config['host'],
+        port=ch_config.get('http_port', 8123),
+        username=ch_config.get('username', 'default'),
+        password=ch_config.get('password', '')
+    )
+
+    query = """
+    SELECT batch_id, count() as block_count
+    FROM offline.block_event_stats
+    GROUP BY batch_id
+    ORDER BY batch_id DESC
+    LIMIT 10
+    """
+    result = client.query_df(query)
+
+    if result.empty:
+        return "⚠️ 暂无离线批次数据"
+
+    output = ["📊 **离线批次列表**\n"]
+    for _, row in result.iterrows():
+        output.append(f"- **批次 {row['batch_id']}**: {row['block_count']} 个Block")
+
+    return "\n".join(output)
+
+
 @tool(description="检查异常检测模型和特征矩阵是否准备就绪。")
 def check_model_readiness() -> str:
     """
     专门给 Agent 调用的‘眼睛’，返回模型和数据的物理存在状态。
     """
     # model_path = get_abs_path("LogMLP_Model.pth")
-    model_path = get_abs_path("block_anomaly_model.pkl")
-    scaler_path = get_abs_path("scaler.pkl")
-    matrix_path = os.path.join(HDFS_BASE_DIR, "preprocessed", "Event_occurrence_matrix.csv")
+    model_path = os.path.join(HDFS_BASE_DIR, "Preprocess_File", "block_anomaly_model.pkl")
+    scaler_path = os.path.join(HDFS_BASE_DIR, "Preprocess_File", "scaler.pkl")
+    matrix_path = os.path.join(HDFS_BASE_DIR, "File", "Event_occurrence_matrix.csv")
 
     status = []
     status.append(f"模型文件: {'✅ 已存在' if os.path.exists(model_path) else '❌ 缺失'}")
@@ -146,9 +222,9 @@ def train_mlp_model(epochs: int = 50) -> str:
     """
     print("[train_mlp_model] 开始执行...")
 
-    data_file = os.path.join(HDFS_BASE_DIR, "preprocessed", "Event_occurrence_matrix.csv")
-    model_out = get_abs_path("block_anomaly_model.pkl")
-    scaler_out = get_abs_path("scaler.pkl")
+    data_file = os.path.join(HDFS_BASE_DIR, "File", "Event_occurrence_matrix.csv")
+    model_out = os.path.join(HDFS_BASE_DIR, "Preprocess_File", "block_anomaly_model.pkl")
+    scaler_out = os.path.join(HDFS_BASE_DIR, "Preprocess_File", "scaler.pkl")
 
     print(f"[train_mlp_model] 检查模型是否存在: {model_out}")
     print(f"[train_mlp_model] 模型文件存在: {os.path.exists(model_out)}")
@@ -194,10 +270,10 @@ def detect_anomaly(threshold: float = 0.3) -> str:
     print("[detect_anomaly] 开始执行异常检测...")
 
     # 1. 使用正确的项目根目录路径
-    model_path = get_abs_path("block_anomaly_model.pkl")
-    scaler_path = get_abs_path("scaler.pkl")
-    matrix_file = os.path.join(HDFS_BASE_DIR, "preprocessed", "Event_occurrence_matrix.csv")
-    template_file = os.path.join(HDFS_BASE_DIR, "preprocessed", "HDFS.log_templates.csv")
+    model_path = os.path.join(HDFS_BASE_DIR, "Preprocess_File", "block_anomaly_model.pkl")
+    scaler_path = os.path.join(HDFS_BASE_DIR, "Preprocess_File", "scaler.pkl")
+    matrix_file = os.path.join(HDFS_BASE_DIR, "File", "Event_occurrence_matrix.csv")
+    template_file = os.path.join(HDFS_BASE_DIR, "File", "HDFS.log_templates.csv")
 
     # 检查模型是否存在，不存在则自动训练
     if not os.path.exists(model_path) or not os.path.exists(scaler_path):

@@ -140,8 +140,9 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f'Using device: {device}')
 
 if __name__ == '__main__':
+    from utils.path_tool import get_abs_path
     # 加载数据
-    data = pd.read_csv('HDFS_v1/preprocessed/Event_occurrence_matrix.csv')
+    data = pd.read_csv(get_abs_path("BackUp/File/Event_occurrence_matrix.csv"))
 
     # 提取特征和标签
     X = data.iloc[:, 3:].values  # 从第4列开始是特征
