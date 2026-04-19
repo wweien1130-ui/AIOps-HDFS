@@ -54,6 +54,9 @@
                 <el-avatar :size="36" src="https://cube.elemecdn.com/0/88/03b0d39583f48206768a7534e55bcpng.png" />
                 <span class="ai-title">AI安全专家</span>
                 <el-tag type="success" size="small">在线</el-tag>
+                <el-button type="primary" size="small" @click="newChat" style="margin-left: auto;">
+                  <el-icon><Plus /></el-icon> 新对话
+                </el-button>
               </div>
             </template>
             <div class="chat-messages" ref="chatContainer">
@@ -186,6 +189,7 @@ import { ref, onMounted, computed, nextTick, onBeforeUnmount } from 'vue'
 import { marked } from 'marked'
 import * as echarts from 'echarts'
 import { ElMessage } from 'element-plus'
+import { Plus } from '@element-plus/icons-vue'
 
 const API_BASE = '/api'
 
@@ -234,15 +238,6 @@ const lastResponse = computed(() => {
   return ''
 })
 
-function renderMarkdown(text) {
-  if (!text) return ''
-  marked.setOptions({
-    breaks: true,
-    gfm: true
-  })
-  return marked.parse(text)
-}
-
 function analyzeEmotion(text) {
   const urgentKeywords = ['紧急', '救命', '崩溃了', '坏了', '故障', '不行', '挂了', '死机', '蓝屏', '报错']
   const anxiousPatterns = [/！{2,}/, /？{2,}/, /\?{2,}/, /操/, /靠/, /草/, /日/, /靠/, /tmd/i, /fuck/i]
@@ -261,6 +256,22 @@ function analyzeEmotion(text) {
   }
 
   return { emotion, priorityMessage }
+}
+
+function renderMarkdown(text) {
+  if (!text) return ''
+  marked.setOptions({
+    breaks: true,
+    gfm: true
+  })
+  return marked.parse(text)
+}
+
+function newChat() {
+  chatMessages.value = [
+    { role: 'assistant', content: '您好！我是AI安全专家，请问有什么可以帮您？' }
+  ]
+  userInput.value = ''
 }
 
 let realtimeTimer = null

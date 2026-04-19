@@ -30,7 +30,10 @@ class ReactAgent:
 
         try:
             for chunk in self.agent.stream(input_dict, stream_mode="values"):
-                if not isinstance(chunk, dict) or "messages" not in chunk:
+                if not isinstance(chunk, dict):
+                    logger.warning(f"[execute_stream] chunk不是dict: {type(chunk)}")
+                    continue
+                if "messages" not in chunk:
                     continue
 
                 messages = chunk.get("messages", [])
@@ -38,17 +41,28 @@ class ReactAgent:
                     continue
 
                 latest_message = messages[-1]
-
-                # 安全获取属性
-                msg_type = getattr(latest_message, "type", None)
-                msg_content = getattr(latest_message, "content", None)
+                if latest_message is None:
+                    continue
+                
+                # 处理字典类型和对象类型
+                if isinstance(latest_message, dict):
+                    msg_type = latest_message.get("type", None)
+                    msg_content = latest_message.get("content", None)
+                else:
+                    # 安全获取属性
+                    msg_type = getattr(latest_message, "type", None)
+                    msg_content = getattr(latest_message, "content", None)
 
                 logger.info(f"[execute_stream] 消息类型: {msg_type}, 内容: {str(msg_content)[:50]}")
 
                 if msg_type == "ai" and msg_content:
                     yield msg_content.strip()
                 elif msg_type == "tool":
-                    tool_name = getattr(latest_message, "name", "tool")
+                    # 处理字典类型和对象类型
+                    if isinstance(latest_message, dict):
+                        tool_name = latest_message.get("name", "tool")
+                    else:
+                        tool_name = getattr(latest_message, "name", "tool")
                     # 输出工具的实际返回内容
                     if msg_content:
                         yield msg_content
@@ -59,7 +73,9 @@ class ReactAgent:
                     logger.info(f"[execute_stream] 未处理的消息类型: {msg_type}")
 
         except Exception as e:
+            import traceback
             logger.error(f"[execute_stream] 执行出错: {e}")
+            logger.error(f"[execute_stream] 错误详情: {traceback.format_exc()}")
             yield f"执行出错: {str(e)}"
 
 
