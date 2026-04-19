@@ -1,0 +1,12 @@
+# Kafka 配置
+kafka:
+  bootstrap_servers: "192.168.115.129:9094"
+  topics:
+    online: "hdfs-logs-online"
+    offline: "hdfs-logs-offline"
+  producer:
+    acks: 1
+    retries: 3
+    batch_size: 65536
+    linger_ms: 10
+    compression_type: "gzip"

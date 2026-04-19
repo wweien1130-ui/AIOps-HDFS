@@ -1,6 +1,6 @@
 import requests
 
-url = "http://192.168.115.129:8123/"
+url = "http://192.168.115.129:8124/"
 query = "SELECT 1"
 auth = ('default', '')  # 空密码
 

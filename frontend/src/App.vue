@@ -15,6 +15,22 @@
           </div>
         </div>
         <div class="header-actions">
+          <el-upload
+            action="/api/upload"
+            :show-file-list="false"
+            :on-success="handleUploadSuccess"
+            :on-error="handleUploadError"
+            accept=".log,.txt"
+          >
+            <el-button type="success">
+              <el-icon><Upload /></el-icon>
+              上传日志
+            </el-button>
+          </el-upload>
+          <el-button type="warning" @click="exportAnomalies">
+            <el-icon><Download /></el-icon>
+            导出异常
+          </el-button>
           <el-switch
             v-model="isRealtime"
             active-text="模拟实时"
@@ -41,6 +57,10 @@
               </div>
             </template>
             <div class="chat-messages" ref="chatContainer">
+              <div v-if="isTyping" class="processing-status">
+                <el-icon class="is-loading"><Loading /></el-icon>
+                正在处理中，请稍候...
+              </div>
               <div
                 v-for="(msg, index) in chatMessages"
                 :key="index"
@@ -129,28 +149,25 @@
                 </template>
                 <el-table :data="topAnomalies" stripe style="width: 100%">
                   <el-table-column prop="block_id" label="Block ID" width="180" />
-                  <el-table-column prop="probability" label="异常概率" width="120">
+                  <el-table-column prop="probability" label="异常概率" width="100">
                     <template #default="{ row }">
                       <el-progress
                         :percentage="(row.probability * 100).toFixed(1)"
                         :color="getProgressColor(row.probability)"
-                        :status="row.probability > 0.8 ? 'exception' : ''"
                       />
                     </template>
                   </el-table-column>
-                  <el-table-column label="关联事件" min-width="300">
+                  <el-table-column prop="label" label="标签" width="70" />
+                  <el-table-column label="E事件" min-width="280">
                     <template #default="{ row }">
                       <el-tag
-                        v-for="(event, idx) in row.events.slice(0, 3)"
+                        v-for="(evt, idx) in (row.events || []).slice(0, 5)"
                         :key="idx"
                         size="small"
                         type="danger"
-                        style="margin-right: 5px;"
+                        style="margin-right: 2px;"
                       >
-                        {{ event.event_id }} ({{ event.count }})
-                      </el-tag>
-                      <el-tag v-if="row.events.length > 3" size="small">
-                        +{{ row.events.length - 3 }}
+                        {{ evt.event_id }}:{{ evt.count }}
                       </el-tag>
                     </template>
                   </el-table-column>
@@ -168,11 +185,12 @@
 import { ref, onMounted, computed, nextTick, onBeforeUnmount } from 'vue'
 import { marked } from 'marked'
 import * as echarts from 'echarts'
+import { ElMessage } from 'element-plus'
 
 const API_BASE = '/api'
 
 const loading = ref(false)
-const isRealtime = ref(false)
+const isRealtime = ref(false)  // 默认关闭实时模式
 const isTyping = ref(false)
 const userInput = ref('')
 const chatMessages = ref([
@@ -230,10 +248,10 @@ function analyzeEmotion(text) {
   const anxiousPatterns = [/！{2,}/, /？{2,}/, /\?{2,}/, /操/, /靠/, /草/, /日/, /靠/, /tmd/i, /fuck/i]
   const exclamationCount = (text.match(/！/g) || []).length
   const questionCount = (text.match(/[？?]/g) || []).length
-  
+
   let emotion = 'normal'
   let priorityMessage = ''
-  
+
   if (urgentKeywords.some(kw => text.toLowerCase().includes(kw.toLowerCase()))) {
     emotion = 'urgent'
     priorityMessage = '检测到您非常焦虑，请放心，我已经优先为您锁定了故障点，正在分析中...'
@@ -241,7 +259,7 @@ function analyzeEmotion(text) {
     emotion = 'anxious'
     priorityMessage = '检测到您很着急，我理解您的心情，请稍等，我马上为您排查问题...'
   }
-  
+
   return { emotion, priorityMessage }
 }
 
@@ -435,14 +453,24 @@ async function sendMessage() {
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
-      
+
       const text = decoder.decode(value)
       const lines = text.split('\n')
-      
+
       for (const line of lines) {
         if (line.startsWith('data: ')) {
           try {
             const data = JSON.parse(line.slice(6))
+
+            // 处理事件类型
+            if (data.event === 'done') {
+              console.log('流结束')
+              break
+            }
+            if (data.event === 'error') {
+              throw new Error(data.error || '未知错误')
+            }
+
             if (data.content) {
               const lastMsg = chatMessages.value[chatMessages.value.length - 1]
               if (lastMsg && lastMsg.role === 'assistant') {
@@ -651,6 +679,8 @@ function speakLastResponse() {
 }
 
 function handleRealtimeChange(val) {
+  // 实时模式暂时禁用，避免频繁调用API
+  /*
   if (val) {
     fetchAnalyzeData()
     realtimeTimer = setInterval(() => {
@@ -661,6 +691,46 @@ function handleRealtimeChange(val) {
       clearInterval(realtimeTimer)
       realtimeTimer = null
     }
+  }
+  */
+  ElMessage.info('实时模式已禁用，如需开启请联系管理员')
+}
+
+async function handleUploadSuccess(response) {
+  ElMessage.success(response.message || '文件上传成功')
+  systemLogs.value.unshift({
+    time: new Date().toLocaleTimeString(),
+    message: `上传成功: ${response.file_path}`,
+    type: 'success'
+  })
+  await refreshData()
+}
+
+function handleUploadError(error) {
+  ElMessage.error('文件上传失败: ' + (error.message || error))
+}
+
+async function exportAnomalies() {
+  try {
+    const response = await fetch('/api/export')
+    if (!response.ok) throw new Error('导出失败')
+
+    const blob = await response.blob()
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `anomalies_${new Date().toISOString().slice(0,10)}.csv`
+    a.click()
+    window.URL.revokeObjectURL(url)
+
+    ElMessage.success('导出成功')
+    systemLogs.value.unshift({
+      time: new Date().toLocaleTimeString(),
+      message: '异常数据已导出',
+      type: 'success'
+    })
+  } catch (error) {
+    ElMessage.error('导出失败: ' + error.message)
   }
 }
 
@@ -678,7 +748,7 @@ onMounted(() => {
 
 function updateCharts() {
   const healthPercent = ((1 - analyzeData.value.anomaly_ratio) * 100).toFixed(1)
-  
+
   if (gaugeChart) {
     gaugeChart.setOption({
       series: [{
@@ -706,18 +776,21 @@ function updateCharts() {
     })
   }
 
-  const eventCounts = {}
-  topAnomalies.value.forEach(anomaly => {
-    anomaly.events.forEach(event => {
-      const eventId = event.event_id
-      eventCounts[eventId] = (eventCounts[eventId] || 0) + event.count
-    })
-  })
-
-  const pieData = Object.entries(eventCounts)
+  // E事件分布饼图
+  const eventDist = analyzeData.value.event_distribution || {}
+  let pieData = Object.entries(eventDist)
+    .filter(([name, value]) => value > 0)
     .map(([name, value]) => ({ name, value }))
     .sort((a, b) => b.value - a.value)
-    .slice(0, 8)
+    .slice(0, 10)
+  
+  // 如果没有E事件分布数据，显示正常/异常比例
+  if (pieData.length === 0) {
+    pieData = [
+      { name: '正常', value: analyzeData.value.total_blocks - analyzeData.value.anomaly_count },
+      { name: '异常', value: analyzeData.value.anomaly_count }
+    ]
+  }
 
   if (pieChart) {
     pieChart.setOption({

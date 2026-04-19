@@ -9,6 +9,7 @@ from typing import List, Dict
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import f1_score
+from sklearn.neural_network import MLPClassifier
 
 
 class MLP(nn.Module):
@@ -64,13 +65,13 @@ def detect_anomalies(
         templates_dict=None
 ) -> List[Dict]:
     """使用训练好的模型全量检测异常（支持 GPU/CPU 自动切换）"""
-    
+
     if data is None and data_file is None:
         raise ValueError("必须提供 data 或 data_file 参数")
-    
+
     if data is None:
         data = pd.read_csv(data_file)
-    
+
     X_raw = data.iloc[:, 3:].values
     X_scaled = scaler.transform(X_raw)
 
@@ -205,4 +206,21 @@ def train_mlp(
 
         # 保存模型
         torch.save(model.state_dict(), model_out)
-        return model_out, scaler_out, f1
+
+        # 同时保存 sklearn 兼容的模型（用于 detect_anomaly）
+        sklearn_model = MLPClassifier(
+            hidden_layer_sizes=(64, 32),
+            activation='relu',
+            max_iter=epochs,
+            random_state=42
+        )
+        sklearn_model.fit(X_train, y_train)
+
+        # 保存 sklearn 模型
+        pkl_path = model_out.replace('.pth', '.pkl') if '.pth' in model_out else model_out
+        joblib.dump(sklearn_model, pkl_path)
+        joblib.dump(scaler, scaler_out)
+        print(f"Sklearn模型已保存到: {pkl_path}")
+        print(f"Scaler已保存到: {scaler_out}")
+
+        return pkl_path, scaler_out, f1

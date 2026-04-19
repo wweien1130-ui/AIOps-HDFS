@@ -2,48 +2,68 @@ from langchain.agents import create_agent
 from model.factory import chat_models
 from agent.tools.agent_tools import (
     rag_retrieve, get_current_time, calculate,
-    preprocess_hdfs_logs, train_mlp_model, detect_anomaly,check_model_readiness
+    preprocess_hdfs_logs, train_mlp_model, detect_anomaly, check_model_readiness
 )
-from agent.tools.middleware import (monitor_tool, log_before_model, report_prompt_switch)
 from utils.prompt_loader import load_system_prompts
+from utils.logger_handler import logger
+import traceback
+
+
 class ReactAgent:
     def __init__(self):
+        logger.info("[ReactAgent] 初始化 Agent...")
+        logger.info(f"[ReactAgent] 模型类型: {type(chat_models)}")
+
         self.agent = create_agent(
             model=chat_models,
             system_prompt=load_system_prompts(),
             tools=[
                 rag_retrieve, get_current_time, calculate,
-                preprocess_hdfs_logs, train_mlp_model, detect_anomaly,check_model_readiness
-            ],
-            middleware=[monitor_tool, log_before_model, report_prompt_switch]
+                preprocess_hdfs_logs, train_mlp_model, detect_anomaly, check_model_readiness
+            ]
         )
+        logger.info("[ReactAgent] Agent 初始化完成")
 
     def execute_stream(self, query: str):
+        logger.info(f"[execute_stream] 开始处理查询: {query}")
         input_dict = {"messages": [{"role": "user", "content": query}]}
 
-        # 使用 values 模式会返回每个步骤的完整 state
-        for chunk in self.agent.stream(input_dict, stream_mode="values"):
-            # 1. 彻底防线：检查 chunk 是否为有效字典，且包含 messages 键
-            if not isinstance(chunk, dict) or "messages" not in chunk:
-                continue
+        try:
+            for chunk in self.agent.stream(input_dict, stream_mode="values"):
+                if not isinstance(chunk, dict) or "messages" not in chunk:
+                    continue
 
-            messages = chunk.get("messages", [])
-            if not messages:
-                continue
+                messages = chunk.get("messages", [])
+                if not messages:
+                    continue
 
-            # 2. 获取最后一条消息
-            latest_message = messages[-1]
+                latest_message = messages[-1]
 
-            # 3. 严格类型检查：确保是 AI 消息且有内容
-            # 使用 getattr 安全获取 type 和 content，防止对象属性缺失
-            msg_type = getattr(latest_message, "type", None)
-            msg_content = getattr(latest_message, "content", "")
+                # 安全获取属性
+                msg_type = getattr(latest_message, "type", None)
+                msg_content = getattr(latest_message, "content", None)
 
-            if msg_type == "ai" and msg_content:
-                # 💡 只在有内容时 yield，避免 Streamlit 渲染空行
-                yield msg_content.strip()
+                logger.info(f"[execute_stream] 消息类型: {msg_type}, 内容: {str(msg_content)[:50]}")
+
+                if msg_type == "ai" and msg_content:
+                    yield msg_content.strip()
+                elif msg_type == "tool":
+                    tool_name = getattr(latest_message, "name", "tool")
+                    # 输出工具的实际返回内容
+                    if msg_content:
+                        yield msg_content
+                    else:
+                        yield f"\n[{tool_name} 执行完成]\n"
+                else:
+                    # 其他类型也打印出来
+                    logger.info(f"[execute_stream] 未处理的消息类型: {msg_type}")
+
+        except Exception as e:
+            logger.error(f"[execute_stream] 执行出错: {e}")
+            yield f"执行出错: {str(e)}"
+
 
 if __name__ == "__main__":
     agent = ReactAgent()
     for chunk in agent.execute_stream("blk_12345 not found 错误怎么解决"):
-        print(chunk,end="",flush=True)
+        print(chunk, end="", flush=True)

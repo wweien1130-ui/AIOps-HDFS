@@ -1,0 +1,11 @@
+# Redis 配置
+redis:
+  host: "192.168.115.129"
+  port: 6382
+  db: 0
+  # 键前缀
+  key_prefix: "anomaly:"
+  keys:
+    top: "top"           # Top 10 异常 Sorted Set
+    detail: "detail:"    # 异常详情 Hash 前缀
+    sync_time: "last_sync_time"

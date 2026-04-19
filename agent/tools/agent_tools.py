@@ -18,6 +18,9 @@ HDFS_BASE_DIR = get_abs_path("HDFS_v1")
 # 从 data_preparator.py 导入 prepare_training_data（多级降级策略）
 from data_preparator import prepare_training_data
 
+# 从 realtime_query.py 导入实时异常查询
+from realtime_query import query_realtime_anomalies
+
 
 @tool(description="检查异常检测模型和特征矩阵是否准备就绪。")
 def check_model_readiness() -> str:
@@ -138,7 +141,23 @@ def preprocess_hdfs_logs(log_file: str = None) -> str:
 
 @tool(description="第二步：使用'Event_occurrence_matrix.csv'训练MLP模型。")
 def train_mlp_model(epochs: int = 50) -> str:
+    """
+    训练MLP模型。如果模型文件已存在，直接返回，不会重复训练。
+    """
+    print("[train_mlp_model] 开始执行...")
+
     data_file = os.path.join(HDFS_BASE_DIR, "preprocessed", "Event_occurrence_matrix.csv")
+    model_out = get_abs_path("block_anomaly_model.pkl")
+    scaler_out = get_abs_path("scaler.pkl")
+
+    print(f"[train_mlp_model] 检查模型是否存在: {model_out}")
+    print(f"[train_mlp_model] 模型文件存在: {os.path.exists(model_out)}")
+    print(f"[train_mlp_model] Scaler文件存在: {os.path.exists(scaler_out)}")
+
+    # 如果模型已存在，直接返回
+    if os.path.exists(model_out) and os.path.exists(scaler_out):
+        print(f"[train_mlp_model] 模型已存在，跳过训练")
+        return f"模型已存在！无需重复训练。文件位置: {model_out}。请直接调用 detect_anomaly 进行检测。"
 
     if not os.path.exists(data_file):
         return "训练失败：找不到矩阵文件，请先执行 preprocess_hdfs_logs。"
@@ -146,16 +165,15 @@ def train_mlp_model(epochs: int = 50) -> str:
     try:
         from model.mlp_model import train_mlp
 
-        # model_out = get_abs_path("LogMLP_Model.pth")
-        model_out = get_abs_path("block_anomaly_model.pkl")
-        scaler_out = get_abs_path("scaler.pkl")
-
+        print(f"[train_mlp_model] 开始训练...")
         model_path, scaler_path, f1 = train_mlp(
             data_file=data_file,
             epochs=epochs,
             model_out=model_out,
             scaler_out=scaler_out
         )
+        print(f"[train_mlp_model] 训练完成，F1: {f1}")
+        print(f"[train_mlp_model] 返回结果...")
 
         return f"MLP模型训练成功！F1-Score: {f1:.4f}。模型已保存到: {model_path}。接下来可以执行 detect_anomaly 了。"
     except Exception as e:
@@ -164,43 +182,80 @@ def train_mlp_model(epochs: int = 50) -> str:
         return f"模型训练崩溃，原因: {str(e)}"
 
 
-@tool(description="使用训练好的MLP模型对HDFS日志进行异常检测。该工具会自动读取预处理后的特征矩阵进行推理。")
+@tool(
+    description="【必须执行】使用MLP模型对HDFS日志进行异常检测，直接加载模型和数据进行预测，输出异常BlockId列表。不需要任何参数！")
 def detect_anomaly(threshold: float = 0.3) -> str:
     """
     核心异常检测工具。
     使用 sklearn 的 MLPClassifier 模型 (block_anomaly_model.pkl)
+
+    ⚠️ 如果模型不存在，会自动训练！
     """
-    # 1. 强制路径锁定
-    matrix_file = os.path.join(TOOLS_DIR, "training_data.csv")
-    model_path = os.path.join(TOOLS_DIR, "block_anomaly_model.pkl")
-    scaler_path = os.path.join(TOOLS_DIR, "scaler.pkl")
+    print("[detect_anomaly] 开始执行异常检测...")
+
+    # 1. 使用正确的项目根目录路径
+    model_path = get_abs_path("block_anomaly_model.pkl")
+    scaler_path = get_abs_path("scaler.pkl")
+    matrix_file = os.path.join(HDFS_BASE_DIR, "preprocessed", "Event_occurrence_matrix.csv")
     template_file = os.path.join(HDFS_BASE_DIR, "preprocessed", "HDFS.log_templates.csv")
 
-    # 2. 物理检查
-    if not os.path.exists(matrix_file):
-        return "检测中断：特征矩阵(training_data.csv)不存在。请先执行 preprocess_hdfs_logs 预处理日志。"
-    if not os.path.exists(model_path):
-        return "检测中断：模型文件(block_anomaly_model.pkl)缺失。请先执行 train_mlp_model 训练模型。"
-    if not os.path.exists(scaler_path):
-        return "检测中断：标准化器(scaler.pkl)缺失。请先执行 train_mlp_model 训练模型。"
+    # 检查模型是否存在，不存在则自动训练
+    if not os.path.exists(model_path) or not os.path.exists(scaler_path):
+        print("[detect_anomaly] 模型文件不存在，开始自动训练...")
 
+        # 确保矩阵文件存在
+        if not os.path.exists(matrix_file):
+            return "错误：特征矩阵文件不存在，请先执行预处理！"
+
+        # 调用训练函数
+        try:
+            from model.mlp_model import train_mlp
+
+            model_path, scaler_path, f1 = train_mlp(
+                data_file=matrix_file,
+                epochs=50,
+                model_out=model_path,
+                scaler_out=scaler_path
+            )
+            print(f"[detect_anomaly] 自动训练完成，F1: {f1}")
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return f"自动训练失败：{str(e)}"
+
+    # 加载模型并检测
     try:
         import joblib
         import pandas as pd
 
-        # 3. 加载数据
+        # 加载数据
+        print(f"[detect_anomaly] 加载数据: {matrix_file}")
         df = pd.read_csv(matrix_file)
+
+        # 如果数据量太大，进行采样（只处理前10000条）
+        MAX_SAMPLES = 10000
+        if len(df) > MAX_SAMPLES:
+            print(f"[detect_anomaly] 数据量过大({len(df)}条)，采样前{MAX_SAMPLES}条")
+            df = df.head(MAX_SAMPLES)
+
         feature_cols = [f'E{i}' for i in range(1, 30)]
         X = df[feature_cols].fillna(0)
+        print(f"[detect_anomaly] 数据加载完成，共 {len(df)} 条")
 
-        # 4. 加载 sklearn 模型和标准化器
+        # 加载 sklearn 模型和标准化器
+        print(f"[detect_anomaly] 加载模型: {model_path}")
         model = joblib.load(model_path)
         scaler = joblib.load(scaler_path)
+        print(f"[detect_anomaly] 模型加载完成，开始预测...")
 
-        # 5. 预测
+        # 预测
+        print(f"[detect_anomaly] 标准化数据...")
         X_scaled = scaler.transform(X)
+        print(f"[detect_anomaly] 执行预测...")
         preds = model.predict(X_scaled)
-        probs = model.predict_proba(X_scaled)[:, 1]  #异常概率
+        print(f"[detect_anomaly] 计算概率...")
+        probs = model.predict_proba(X_scaled)[:, 1]  # 异常概率
+        print(f"[detect_anomaly] 预测完成")
 
         # 6. 整理结果
         df['prediction'] = ['Fail' if p == 1 else 'Success' for p in preds]
@@ -209,28 +264,13 @@ def detect_anomaly(threshold: float = 0.3) -> str:
         anomalies = df[df['prediction'] == 'Fail'].sort_values('anomaly_prob', ascending=False)
         total_anomalies = len(anomalies)
 
+        print(f"[detect_anomaly] 检测完成，发现 {total_anomalies} 个异常")
+
         if total_anomalies == 0:
             return f"检测完成：在 {len(df)} 条记录中未发现异常（当前阈值 {threshold}）。系统状态正常。"
 
-        # ===== 自动查询解决方案 =====
+        # 简化输出，跳过 RAG 查询（太慢）
         anomaly_blocks = anomalies.head(10)
-        solutions = []
-
-        for _, row in anomaly_blocks.iterrows():
-            block_id = row['BlockId']
-            # 调用 rag_retrieve 获取解决方案
-            try:
-                from agent_tools import rag_retrieve
-                solution = rag_retrieve.invoke(f"HDFS BlockId {block_id} 异常解决方案")
-            except:
-                solution = "未找到解决方案"
-
-            solutions.append({
-                'block_id': block_id,
-                'probability': row['anomaly_prob'],
-                'label': row['Label'],
-                'solution': solution
-            })
 
         # 构建完整报告
         output = f"### 🔍 异常检测摘要报告\n\n"
@@ -239,19 +279,37 @@ def detect_anomaly(threshold: float = 0.3) -> str:
         output += f"- **异常比例**: {(total_anomalies / len(df)):.2%}\n"
         output += f"- **当前判定阈值**: {threshold}\n"
         output += f"\n---\n\n"
-        output += f"#### 🚨 前 10 条高危异常及解决方案:\n\n"
+        output += f"#### 🚨 前 10 条高危异常:\n\n"
 
-        for i, s in enumerate(solutions, 1):
-            output += f"**{i}. BlockID**: `{s['block_id']}` | **异常概率**: `{s['probability']:.4f}` | **标签**: {s['label']}\n"
-            output += f"**解决方案**: {s['solution']}\n\n"
+        for i, (_, row) in enumerate(anomaly_blocks.iterrows(), 1):
+            # 获取E事件详情
+            events_str = ""
+            for j in range(1, 30):
+                col = f'E{j}'
+                if col in row and row[col] > 0:
+                    events_str += f"{col}:{int(row[col])} "
+            output += f"**{i}. BlockID**: `{row['BlockId']}` | **异常概率**: `{row['anomaly_prob']:.4f}` | **标签**: {row['Label']} | **事件**: {events_str}\n"
 
         if total_anomalies > 10:
             output += f"---\n\n"
-            output += f"> **提示**: 还有 {total_anomalies - 10} 条异常记录未在此列出。您可以继续询问解决方案。"
+            output += f"> **提示**: 还有 {total_anomalies - 10} 条异常记录未在此列出。"
 
         return output
 
     except Exception as e:
         import traceback
-        error_msg = f"异常检测运行时发生崩溃: {str(e)}\n{traceback.format_exc()}"
+        print(f"[detect_anomaly] 发生错误: {e}")
+        traceback.print_exc()
+        error_msg = f"异常检测运行时发生崩溃: {str(e)}"
         return error_msg
+
+
+@tool(description="查询当前实时异常（从Redis/ClickHouse获取）。如无实时数据则返回提示。")
+def get_realtime_anomalies(limit: int = 10) -> str:
+    """
+    查询实时异常数据：
+    1. 优先从 Redis 获取 Top N 异常
+    2. 如果 Redis 无数据，从 ClickHouse 查询
+    3. 如果都无数据，返回提示
+    """
+    return query_realtime_anomalies(limit)

@@ -1,0 +1,19 @@
+# ClickHouse 配置
+clickhouse:
+  # 在线数据库配置
+  online:
+    host: "192.168.115.129"
+    port: 9001  # Docker映射：9001->9000 (native protocol)
+    http_port: 8124  # Docker映射：8124->8123 (HTTP)
+    username: "default"
+    password: ""
+    database: "online"
+
+  # 离线数据库配置
+  offline:
+    host: "192.168.115.129"
+    port: 9001
+    http_port: 8124
+    username: "default"
+    password: ""
+    database: "offline"
