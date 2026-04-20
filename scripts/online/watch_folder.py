@@ -25,7 +25,7 @@ os.makedirs(PROCESSED_DIR, exist_ok=True)
 
 SEND_RATE = 50  # 每秒发送的行数
 SEND_INTERVAL = 1.0 / SEND_RATE  # 每次发送的间隔时间（秒）
-MAX_LINES = 1000  # 测试时限制只发送1000行
+MAX_LINES = 10000  # 测试时限制只发送1000行
 
 producer = KafkaProducer(
     bootstrap_servers=kafka_config['bootstrap_servers'],
@@ -50,8 +50,7 @@ def send_file_to_kafka(file_path):
             message = f"{batch_id}\t{line.strip()}"
             producer.send(topic, value=message)
             count += 1
-        elif count >= MAX_LINES:
-            break
+
             
             # 限速：每发送一行后等待
             time.sleep(SEND_INTERVAL)
@@ -59,6 +58,10 @@ def send_file_to_kafka(file_path):
             if count % 100 == 0:
                 elapsed = time.time() - start_time
                 print(f"  进度: {count}/{total_lines} 行 ({count/elapsed:.1f} 行/秒)")
+
+        elif count >= MAX_LINES:
+            break
+
     
     producer.flush()
     elapsed = time.time() - start_time
@@ -88,7 +91,7 @@ def main():
                 
                 # 移动到已处理目录
                 filename = os.path.basename(file_path)
-                processed_path = os.path.join(PROCESSED_DIR, f"{int(time.time())}_{filename}")
+                processed_path = os.path.join(PROCESSED_DIR, filename)
                 os.rename(file_path, processed_path)
                 processed_files.add(file_path)
                 print(f"  → 已移动到: {processed_path}")

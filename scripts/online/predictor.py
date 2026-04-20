@@ -113,8 +113,7 @@ class RealtimePredictor:
         if os.path.exists(state_file):
             with open(state_file, 'r') as f:
                 return f.read().strip()
-        return (datetime.now() - timedelta(hours=1)).strftime('%Y-%m-%d %H:%M:%S')
-
+        return (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')
     def save_last_predict_time(self, ts):
         state_file = os.path.join(script_dir, '.last_predict_time')
         with open(state_file, 'w') as f:
@@ -177,9 +176,9 @@ class RealtimePredictor:
             score = probs[idx]
             if score > self.config['anomaly_threshold']:
                 record = {
-                    'block_id': row['block_id'],
+                    'block_id': str(row['block_id']),
                     **{f'E{i}': int(row.get(f'E{i}', 0)) for i in range(1, 30)},
-                    'anomaly_score': score,
+                    'anomaly_score': float(score),
                     'detected_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
                 }
                 anomalies.append(record)

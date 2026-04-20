@@ -40,8 +40,9 @@ while True:
         E21, E22, E23, E24, E25, E26, E27, E28, E29,
         anomaly_score, max(detected_at) as detected_at
     FROM online.anomaly_blocks
-    WHERE detected_at > '{last_sync}'
-    GROUP BY block_id
+    WHERE block_id IN (
+        SELECT block_id FROM online.anomaly_blocks WHERE detected_at > '{last_sync}'
+    )    GROUP BY block_id
     """
     df = client.query_df(query)
     if not df.empty:
