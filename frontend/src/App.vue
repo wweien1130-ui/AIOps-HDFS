@@ -434,13 +434,22 @@ async function fetchRealtimeAnomalies() {
           .filter(([k]) => k.startsWith('E'))
           .map(([k, v]) => ({ event_id: k, count: parseInt(v) || 0 }))
       }))
-      analyzeData.value = {
-        ...analyzeData.value,
-        top_anomalies: topAnomalies,
-        anomaly_count: topAnomalies.length,
-        total_blocks: topAnomalies.length * 10,
-        anomaly_ratio: topAnomalies.length / (topAnomalies.length * 10)
-      }
+      // 计算E事件分布
+const eventDistribution = {}
+topAnomalies.forEach(anomaly => {
+  anomaly.events.forEach(evt => {
+    eventDistribution[evt.event_id] = (eventDistribution[evt.event_id] || 0) + evt.count
+  })
+})
+
+analyzeData.value = {
+  ...analyzeData.value,
+  top_anomalies: topAnomalies,
+  anomaly_count: topAnomalies.length,
+  total_blocks: 100,
+  anomaly_ratio: topAnomalies.length / 100,
+  event_distribution: eventDistribution
+}
       systemLogs.value.unshift({
         time: new Date().toLocaleTimeString(),
         message: `实时异常：发现 ${topAnomalies.length} 个异常块（${result.source}）`,
@@ -733,21 +742,19 @@ function speakLastResponse() {
 }
 
 function handleRealtimeChange(val) {
-  // 实时模式暂时禁用，避免频繁调用API
-  /*
   if (val) {
-    fetchAnalyzeData()
+    fetchRealtimeAnomalies()
     realtimeTimer = setInterval(() => {
-      fetchAnalyzeData()
-    }, 3000)
+      fetchRealtimeAnomalies()
+    }, 5000)
+    ElMessage.success('实时模式已开启，每5秒刷新一次')
   } else {
     if (realtimeTimer) {
       clearInterval(realtimeTimer)
       realtimeTimer = null
     }
+    ElMessage.info('实时模式已关闭')
   }
-  */
-  ElMessage.info('实时模式已禁用，如需开启请联系管理员')
 }
 
 async function handleUploadSuccess(response) {
