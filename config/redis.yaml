@@ -1,6 +1,7 @@
 # Redis 配置
 redis:
   host: "192.168.115.129"
+  password: "696903"
   port: 6382
   db: 0
   # 键前缀

@@ -32,18 +32,24 @@ def query_from_redis(limit: int = 10) -> str:
 
     try:
         import redis
-        r = redis.Redis(host=config['redis']['host'], port=config['redis']['port'], db=config['redis']['db'])
-        key_prefix = config['redis'].get('key_prefix', 'anomaly:')
+        redis_config = config['redis']
+        r = redis.Redis(
+            host=redis_config['host'],
+            port=redis_config['port'],
+            db=redis_config.get('db', 0),
+            password=redis_config.get('password'),
+            decode_responses=True
+        )
+        key_prefix = redis_config.get('key_prefix', 'anomaly:')
 
-        top_anomalies = r.zrevrange(key_prefix + config['redis']['keys']['top'], 0, limit - 1, withscores=True)
+        top_anomalies = r.zrevrange(key_prefix + redis_config['keys']['top'], 0, limit - 1, withscores=True)
 
         if not top_anomalies:
             return ""
 
         results = ["📊 **实时异常（来自Redis）**", ""]
         for block_id, score in top_anomalies:
-            block_id_str = block_id.decode() if isinstance(block_id, bytes) else block_id
-            results.append(f"- **{block_id_str}** (异常分数: {score:.4f})")
+            results.append(f"- **{block_id}** (异常分数: {score:.4f})")
 
         return "\n".join(results)
     except Exception as e:
