@@ -7,30 +7,30 @@ import os
 config_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'config')
 
 # ClickHouse 配置
-with open(os.path.join(config_dir, 'clickhouse.yaml'), 'r') as f:
+with open(os.path.join(config_dir, 'clickhouse.yaml'), 'r', encoding='utf-8') as f:
     ch_config = yaml.safe_load(f)['clickhouse']['online']
 client = clickhouse_connect.get_client(
     host=ch_config['host'],
-    port=ch_config['port'],
+    port=ch_config.get('http_port', 8123),  # 使用HTTP端口
     username=ch_config.get('username', 'default'),
     password=ch_config.get('password', '')
 )
 
 # Redis 配置
-with open(os.path.join(config_dir, 'redis.yaml'), 'r') as f:
+with open(os.path.join(config_dir, 'redis.yaml'), 'r', encoding='utf-8') as f:
     redis_config = yaml.safe_load(f)['redis']
 r = redis.Redis(
     host=redis_config['host'],
     port=redis_config['port'],
-    db=redis_config['db']
+    db=redis_config.get('db', 0),
+    password=redis_config.get('password'),
+    decode_responses=True
 )
 
 key_prefix = redis_config.get('key_prefix', 'anomaly:')
 last_sync = r.get(key_prefix + redis_config['keys']['sync_time'])
 if last_sync is None:
     last_sync = '1970-01-01 00:00:00'
-else:
-    last_sync = last_sync.decode()
 
 while True:
     query = f"""

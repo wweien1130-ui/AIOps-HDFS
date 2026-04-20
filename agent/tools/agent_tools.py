@@ -389,3 +389,101 @@ def get_realtime_anomalies(limit: int = 10) -> str:
     3. 如果都无数据，返回提示
     """
     return query_realtime_anomalies(limit)
+
+
+@tool(description="启动实时监控服务（自动检测在线日志异常）")
+def start_realtime_service() -> str:
+    """
+    启动实时监控服务：
+    1. 启动 predictor.py - 预测异常写入ClickHouse
+    2. 启动 redis_sync.py - 同步到Redis
+    启动后，Agent会自动处理在线日志的异常检测
+    """
+    import subprocess
+    import os
+    import sys
+    
+    scripts_dir = get_abs_path("scripts/online")
+    
+    predictor_script = os.path.join(scripts_dir, "predictor.py")
+    redis_sync_script = os.path.join(scripts_dir, "redis_sync.py")
+    watch_folder_script = os.path.join(scripts_dir, "watch_folder.py")
+    
+    if not os.path.exists(predictor_script):
+        return f"❌ 找不到预测脚本: {predictor_script}"
+    if not os.path.exists(redis_sync_script):
+        return f"❌ 找不到同步脚本: {redis_sync_script}"
+    
+    try:
+        import logging
+        logging.basicConfig(level=logging.INFO)
+        
+        proc1 = subprocess.Popen(
+            [sys.executable, predictor_script],
+            cwd=scripts_dir,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
+        )
+        logging.info(f"启动predictor: pid={proc1.pid}")
+        
+        proc2 = subprocess.Popen(
+            [sys.executable, redis_sync_script],
+            cwd=scripts_dir,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
+        )
+        logging.info(f"启动redis_sync: pid={proc2.pid}")
+        
+        proc3 = subprocess.Popen(
+            [sys.executable, watch_folder_script],
+            cwd=scripts_dir,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
+        )
+        logging.info(f"启动watch_folder: pid={proc3.pid}")
+        
+        watch_dir = get_abs_path("HDFS_Test")
+        
+        return f"""✅ 实时监控服务已启动！
+
+服务说明：
+1. predictor.py - 定时检测 online.block_event_stats，写入异常到 anomaly_blocks
+2. redis_sync.py - 同步异常到Redis，供快速查询
+3. watch_folder.py - 监控文件夹自动读取日志
+
+监控文件夹: {watch_dir}
+
+现在可以：
+- 把日志文件复制到监控文件夹，系统会自动读取并检测
+- 查询实时异常数据"""
+    except Exception as e:
+        return f"❌ 启动失败: {str(e)}"
+
+
+@tool(description="停止实时监控服务")
+def stop_realtime_service() -> str:
+    """
+    停止实时监控服务：
+    1. 停止 predictor.py
+    2. 停止 redis_sync.py
+    3. 停止 watch_folder.py
+    """
+    import psutil
+    
+    stopped = []
+    errors = []
+    
+    scripts = ['predictor.py', 'redis_sync.py', 'watch_folder.py']
+    
+    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+        try:
+            cmdline = proc.info.get('cmdline', [])
+            if cmdline and any(script in ' '.join(cmdline) for script in scripts):
+                proc.terminate()
+                stopped.append(cmdline)
+        except psutil.NoSuchProcess:
+            pass
+        except Exception as e:
+            errors.append(str(e))
+    
+    if stopped:
+        return f"✅ 已停止实时监控服务！\n\n停止的进程: {len(stopped)}个"
+    else:
+        return "⚠️ 没有正在运行的实时监控服务"

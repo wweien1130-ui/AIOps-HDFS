@@ -65,7 +65,7 @@ def query_from_clickhouse(limit: int = 10) -> str:
         import clickhouse_connect
         client = clickhouse_connect.get_client(
             host=config['clickhouse']['host'],
-            port=config['clickhouse']['port'],
+            port=config['clickhouse'].get('http_port', 8123),
             username=config['clickhouse'].get('username', 'default'),
             password=config['clickhouse'].get('password', '')
         )

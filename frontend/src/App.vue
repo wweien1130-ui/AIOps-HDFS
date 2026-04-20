@@ -421,9 +421,52 @@ async function fetchAnalyzeData() {
   }
 }
 
+async function fetchRealtimeAnomalies() {
+  try {
+    const response = await fetch(`${API_BASE}/realtime/anomalies?limit=10`)
+    const result = await response.json()
+    
+    if (result.anomalies && result.anomalies.length > 0) {
+      const topAnomalies = result.anomalies.map(a => ({
+        block_id: a.block_id,
+        probability: parseFloat(a.anomaly_score) || 0,
+        events: Object.entries(a)
+          .filter(([k]) => k.startsWith('E'))
+          .map(([k, v]) => ({ event_id: k, count: parseInt(v) || 0 }))
+      }))
+      analyzeData.value = {
+        ...analyzeData.value,
+        top_anomalies: topAnomalies,
+        anomaly_count: topAnomalies.length,
+        total_blocks: topAnomalies.length * 10,
+        anomaly_ratio: topAnomalies.length / (topAnomalies.length * 10)
+      }
+      systemLogs.value.unshift({
+        time: new Date().toLocaleTimeString(),
+        message: `实时异常：发现 ${topAnomalies.length} 个异常块（${result.source}）`,
+        type: 'success'
+      })
+    } else {
+      systemLogs.value.unshift({
+        time: new Date().toLocaleTimeString(),
+        message: '暂无实时异常数据',
+        type: 'info'
+      })
+    }
+  } catch (error) {
+    console.error('获取实时异常失败:', error)
+    systemLogs.value.unshift({
+      time: new Date().toLocaleTimeString(),
+      message: `获取实时异常失败: ${error.message}`,
+      type: 'danger'
+    })
+  }
+}
+
 async function refreshData() {
   loading.value = true
   await fetchAnalyzeData()
+  await fetchRealtimeAnomalies()
   updateCharts()
   loading.value = false
 }

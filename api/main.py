@@ -432,7 +432,7 @@ async def get_offline_batches():
     try:
         client = clickhouse_connect.get_client(
             host=ch_config['host'],
-            port=ch_config['port'],
+            port=ch_config.get('http_port', 8123),
             username=ch_config.get('username', 'default'),
             password=ch_config.get('password', '')
         )
@@ -463,6 +463,80 @@ async def get_offline_batches():
         return {"success": True, "batches": batches}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"查询失败: {str(e)}")
+
+
+@app.get("/api/realtime/anomalies")
+async def get_realtime_anomalies(limit: int = 10):
+    """
+    获取实时异常数据（从Redis/ClickHouse）
+    """
+    import yaml
+    import clickhouse_connect
+    import redis
+
+    config_dir = get_abs_path("config")
+    
+    # ClickHouse配置
+    ch_config_path = os.path.join(config_dir, "clickhouse.yaml")
+    with open(ch_config_path, 'r', encoding='utf-8') as f:
+        ch_config = yaml.safe_load(f)['clickhouse']['online']
+    
+    # Redis配置
+    redis_config_path = os.path.join(config_dir, "redis.yaml")
+    with open(redis_config_path, 'r', encoding='utf-8') as f:
+        redis_config = yaml.safe_load(f)['redis']
+
+    try:
+        # 优先从Redis获取
+        r = redis.Redis(
+            host=redis_config['host'],
+            port=redis_config['port'],
+            db=redis_config.get('db', 0),
+            password=redis_config.get('password'),
+            decode_responses=True
+        )
+        
+        key_prefix = redis_config.get('key_prefix', 'anomaly:')
+        top_key = key_prefix + redis_config['keys']['top']
+        
+        # 从Redis获取Top N
+        top_anomalies = r.zrevrange(top_key, 0, limit - 1, withscores=True)
+        
+        if top_anomalies:
+            results = []
+            for block_id, score in top_anomalies:
+                detail_key = key_prefix + redis_config['keys']['detail'] + block_id
+                detail = r.hgetall(detail_key)
+                results.append({
+                    'block_id': block_id,
+                    'anomaly_score': score,
+                    **detail
+                })
+            return {"source": "redis", "anomalies": results}
+        
+        # Redis无数据，从ClickHouse获取
+        client = clickhouse_connect.get_client(
+            host=ch_config['host'],
+            port=ch_config.get('http_port', 8123),
+            username=ch_config.get('username', 'default'),
+            password=ch_config.get('password', '')
+        )
+        
+        query = f"""
+        SELECT block_id, anomaly_score, detected_at
+        FROM {ch_config['database']}.anomaly_blocks
+        ORDER BY anomaly_score DESC
+        LIMIT {limit}
+        """
+        df = client.query_df(query)
+        
+        if not df.empty:
+            return {"source": "clickhouse", "anomalies": df.to_dict('records')}
+        
+        return {"source": "none", "anomalies": [], "message": "暂无实时异常数据"}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取实时异常失败: {str(e)}")
 
 
 @app.post("/api/offline/process/{batch_id}")
