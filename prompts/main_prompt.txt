@@ -150,6 +150,8 @@
 当用户提到"离线"、"批次"、"batch"相关内容时：
 → **调用 list_offline_batches 查询离线批次列表**
 → **调用 process_offline_batch 处理指定批次**
+→ **处理完成后，必须调用 list_offline_anomalies 获取异常详情**
+→ **根据异常详情中的E1-E29事件分布，给出针对性的解决方案**
 → **不要调用 get_realtime_anomalies（那是实时数据）**
 
 ### 场景6：实时异常查询
@@ -159,12 +161,18 @@
 
 ### 场景7：启动实时监控服务
 当用户要求"启动实时监控"、"开启实时检测"、"启动在线服务"、"在线检测"时：
-→ **调用 start_realtime_service** 启动实时预测和同步服务
+→ **必须调用 start_realtime_service** 启动以下3个服务：
+  1. predictor.py - 实时预测异常写入ClickHouse
+  2. redis_sync.py - 同步异常到Redis
+  3. watch_folder.py - 监控文件夹读取日志
+
 
 ### 场景8：停止实时监控服务
 当用户要求"停止实时监控"、"关闭实时检测"、"停止在线服务"时：
-→ **调用 stop_realtime_service** 停止实时预测和同步服务
-
+→ **必须调用 stop_realtime_service** 停止以下3个服务：
+  1. predictor.py - 实时预测异常
+  2. redis_sync.py - 同步异常到Redis
+  3. watch_folder.py - 监控文件夹读取日志
 
 ---
 

@@ -98,6 +98,94 @@ def list_offline_batches() -> str:
     return "\n".join(output)
 
 
+@tool(description="查询指定批次的异常详情")
+def list_offline_anomalies(batch_id: str) -> str:
+    """
+    查询指定batch_id的异常详情，包括每个block的E1-E29事件分布和异常分数。
+    用于获取具体异常信息，以便给出针对性的解决方案。
+    """
+    import clickhouse_connect
+    import yaml
+    config_dir = get_abs_path("config")
+    ch_config_path = os.path.join(config_dir, "clickhouse.yaml")
+    with open(ch_config_path, 'r', encoding='utf-8') as f:
+        ch_config = yaml.safe_load(f)['clickhouse']['offline']
+    client = clickhouse_connect.get_client(
+        host=ch_config['host'],
+        port=ch_config.get('http_port', 8123),
+        username=ch_config.get('username', 'default'),
+        password=ch_config.get('password', '')
+    )
+    query = f"""
+    SELECT 
+        block_id,
+        E1, E2, E3, E4, E5, E6, E7, E8, E9, E10,
+        E11, E12, E13, E14, E15, E16, E17, E18, E19, E20,
+        E21, E22, E23, E24, E25, E26, E27, E28, E29,
+        anomaly_score
+    FROM offline.anomaly_blocks
+    WHERE batch_id = {batch_id}
+    ORDER BY anomaly_score DESC
+    """
+    result = client.query_df(query)
+    if result.empty:
+        return f"⚠️ 批次 {batch_id} 暂无异常数据"
+    # E1-E29事件含义映射
+    event_meanings = {
+        'E1': 'Adding an already existing block',
+        'E2': 'Verification succeeded',
+        'E3': 'Served block to',
+        'E4': 'Got exception while serving',
+        'E5': 'Receiving block src:dest:',
+        'E6': 'Received block src:dest:of size',
+        'E7': 'writeBlock received exception',
+        'E8': 'PacketResponder for block Interrupted',
+        'E9': 'Received block of size from',
+        'E10': 'PacketResponder Exception',
+        'E11': 'PacketResponder for block terminating',
+        'E12': 'Exception writing block to mirror',
+        'E13': 'Receiving empty packet for block',
+        'E14': 'Exception in receiveBlock for block',
+        'E15': 'Changing block file offset',
+        'E16': 'Transmitted block to',
+        'E17': 'Failed to transfer to',
+        'E18': 'Starting thread to transfer block',
+        'E19': 'Reopen Block',
+        'E20': 'Unexpected error deleting block',
+        'E21': 'Deleting block file',
+        'E22': 'allocateBlock:',
+        'E23': 'delete: is added to invalidSet',
+        'E24': 'Removing block from neededReplications',
+        'E25': 'ask to replicate to',
+        'E26': 'addStoredBlock: blockMap updated',
+        'E27': 'addStoredBlock: Redundant request',
+        'E28': 'addStoredBlock: Block not in any file',
+        'E29': 'PendingReplicationMonitor timeout'
+    }
+    output = [f"📊 **批次 {batch_id} 异常详情** (共 {len(result)} 个异常)\n"]
+    output.append("=" * 80)
+    for idx, row in result.iterrows():
+        output.append(f"\n### Block: **{row['block_id']}** (异常分数: {row['anomaly_score']:.4f})")
+
+        # 找出非零的事件
+        nonzero_events = []
+        for i in range(1, 30):
+            e_col = f'E{i}'
+            if row[e_col] > 0:
+                nonzero_events.append((e_col, row[e_col], event_meanings.get(e_col, 'Unknown')))
+
+        if nonzero_events:
+            output.append("事件统计:")
+            for e, cnt, meaning in sorted(nonzero_events, key=lambda x: x[1], reverse=True):
+                output.append(f"  - {e} ({meaning}): {cnt} 次")
+        else:
+            output.append("  无事件统计")
+    return "\n".join(output)
+
+
+
+
+
 @tool(description="检查异常检测模型和特征矩阵是否准备就绪。")
 def check_model_readiness() -> str:
     """
