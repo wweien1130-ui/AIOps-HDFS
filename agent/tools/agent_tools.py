@@ -2,6 +2,7 @@ import os
 import re
 import sys
 from langchain_core.tools import tool
+from datetime import datetime
 
 TOOLS_DIR = os.path.abspath(os.path.dirname(__file__))
 PROJECT_ROOT = os.path.dirname(os.path.dirname(TOOLS_DIR))
@@ -91,9 +92,31 @@ def list_offline_batches() -> str:
     if result.empty:
         return "⚠️ 暂无离线批次数据"
 
-    output = ["📊 **离线批次列表**\n"]
-    for _, row in result.iterrows():
-        output.append(f"- **批次 {row['batch_id']}**: {row['block_count']} 个Block")
+    output = ["📋 ═══ 离线批次列表 ═══"]
+    output.append("\n")
+
+    total_blocks = 0
+    for idx, row in result.iterrows():
+        try:
+            batch_time = datetime.fromtimestamp(int(row['batch_id'])).strftime('%Y-%m-%d %H:%M')
+        except:
+            batch_time = "未知"
+        block_count = row['block_count']
+        total_blocks += block_count
+        # 根据block数量显示不同的状态
+        if block_count > 50:
+            status = "🔴 高风险"
+        elif block_count > 20:
+            status = "🟡 中风险"
+        else:
+            status = "🟢 正常"
+        output.append(f"┌─ 📦 批次: `{row['batch_id']}`")
+        output.append(f"│  ├─ 时间: {batch_time}")
+        output.append(f"│  ├─ Block数: {block_count}")
+        output.append(f"│  └─ 状态: {status}")
+
+    output.append("\n" + "─" * 40)
+    output.append(f"📊 统计: 共 **{len(result)}** 个批次 | **{total_blocks}** 个Block")
 
     return "\n".join(output)
 
@@ -130,60 +153,71 @@ def list_offline_anomalies(batch_id: str) -> str:
     result = client.query_df(query)
     if result.empty:
         return f"⚠️ 批次 {batch_id} 暂无异常数据"
-    # E1-E29事件含义映射
-    event_meanings = {
-        'E1': 'Adding an already existing block',
-        'E2': 'Verification succeeded',
-        'E3': 'Served block to',
-        'E4': 'Got exception while serving',
-        'E5': 'Receiving block src:dest:',
-        'E6': 'Received block src:dest:of size',
-        'E7': 'writeBlock received exception',
-        'E8': 'PacketResponder for block Interrupted',
-        'E9': 'Received block of size from',
-        'E10': 'PacketResponder Exception',
-        'E11': 'PacketResponder for block terminating',
-        'E12': 'Exception writing block to mirror',
-        'E13': 'Receiving empty packet for block',
-        'E14': 'Exception in receiveBlock for block',
-        'E15': 'Changing block file offset',
-        'E16': 'Transmitted block to',
-        'E17': 'Failed to transfer to',
-        'E18': 'Starting thread to transfer block',
-        'E19': 'Reopen Block',
-        'E20': 'Unexpected error deleting block',
-        'E21': 'Deleting block file',
-        'E22': 'allocateBlock:',
-        'E23': 'delete: is added to invalidSet',
-        'E24': 'Removing block from neededReplications',
-        'E25': 'ask to replicate to',
-        'E26': 'addStoredBlock: blockMap updated',
-        'E27': 'addStoredBlock: Redundant request',
-        'E28': 'addStoredBlock: Block not in any file',
-        'E29': 'PendingReplicationMonitor timeout'
-    }
-    output = [f"📊 **批次 {batch_id} 异常详情** (共 {len(result)} 个异常)\n"]
-    output.append("=" * 80)
-    for idx, row in result.iterrows():
-        output.append(f"\n### Block: **{row['block_id']}** (异常分数: {row['anomaly_score']:.4f})")
 
+    # 去重：只保留每个block_id分数最高的记录
+    result = result.drop_duplicates(subset=['block_id'], keep='first')
+
+    # E1-E29事件含义映射（中文）
+    event_meanings = {
+        'E1': '重复块添加',
+        'E2': '块校验成功',
+        'E3': '块服务请求',
+        'E4': '块服务异常',
+        'E5': '块接收中',
+        'E6': '块接收完成',
+        'E7': '写块异常',
+        'E8': '数据包中断',
+        'E9': '接收成功',
+        'E10': '数据包异常',
+        'E11': '响应器终止',
+        'E12': '镜像写异常',
+        'E13': '空数据包',
+        'E14': '接收异常',
+        'E15': '偏移变更',
+        'E16': '传输完成',
+        'E17': '传输失败',
+        'E18': '启动传输',
+        'E19': '重新打开块',
+        'E20': '删除元数据错误',
+        'E21': '删除块文件',
+        'E22': '分配块',
+        'E23': '标记无效',
+        'E24': '移除复制',
+        'E25': '请求复制',
+        'E26': '块映射更新',
+        'E27': '重复请求',
+        'E28': '块不在文件',
+        'E29': '复制超时'
+    }
+
+    output = [f"🎯 **批次 {batch_id} 异常分析报告**"]
+    output.append(f"📊 异常Block数量: **{len(result)}** 个\n")
+    output.append("=" * 70)
+
+    for idx, row in result.iterrows():
         # 找出非零的事件
         nonzero_events = []
         for i in range(1, 30):
             e_col = f'E{i}'
             if row[e_col] > 0:
-                nonzero_events.append((e_col, row[e_col], event_meanings.get(e_col, 'Unknown')))
+                nonzero_events.append((e_col, int(row[e_col]), event_meanings.get(e_col, 'Unknown')))
 
-        if nonzero_events:
-            output.append("事件统计:")
-            for e, cnt, meaning in sorted(nonzero_events, key=lambda x: x[1], reverse=True):
-                output.append(f"  - {e} ({meaning}): {cnt} 次")
-        else:
-            output.append("  无事件统计")
+        # 按次数排序
+        sorted_events = sorted(nonzero_events, key=lambda x: x[1], reverse=True)
+        max_cnt = max([e[1] for e in sorted_events]) if sorted_events else 1
+
+        output.append(f"\n🔴 Block: `{row['block_id']}`")
+        output.append(f"   异常分数: **{row['anomaly_score']:.4f}**")
+
+        if sorted_events:
+            output.append("   📈 事件分布:")
+            for e, cnt, meaning in sorted_events[:5]:
+                bar_len = int(cnt / max_cnt * 10)
+                bar = "▓" * bar_len + "░" * (10 - bar_len)
+                output.append(f"      {e} {meaning}: {cnt:3d} │{bar}│")
+
+    output.append("\n" + "=" * 70)
     return "\n".join(output)
-
-
-
 
 
 @tool(description="检查异常检测模型和特征矩阵是否准备就绪。")
@@ -490,45 +524,45 @@ def start_realtime_service() -> str:
     import subprocess
     import os
     import sys
-    
+
     scripts_dir = get_abs_path("scripts/online")
-    
+
     predictor_script = os.path.join(scripts_dir, "predictor.py")
     redis_sync_script = os.path.join(scripts_dir, "redis_sync.py")
     watch_folder_script = os.path.join(scripts_dir, "watch_folder.py")
-    
+
     if not os.path.exists(predictor_script):
         return f"❌ 找不到预测脚本: {predictor_script}"
     if not os.path.exists(redis_sync_script):
         return f"❌ 找不到同步脚本: {redis_sync_script}"
-    
+
     try:
         import logging
         logging.basicConfig(level=logging.INFO)
-        
+
         proc1 = subprocess.Popen(
             [sys.executable, predictor_script],
             cwd=scripts_dir,
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
         )
         logging.info(f"启动predictor: pid={proc1.pid}")
-        
+
         proc2 = subprocess.Popen(
             [sys.executable, redis_sync_script],
             cwd=scripts_dir,
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
         )
         logging.info(f"启动redis_sync: pid={proc2.pid}")
-        
+
         proc3 = subprocess.Popen(
             [sys.executable, watch_folder_script],
             cwd=scripts_dir,
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
         )
         logging.info(f"启动watch_folder: pid={proc3.pid}")
-        
+
         watch_dir = get_abs_path("HDFS_Test")
-        
+
         return f"""✅ 实时监控服务已启动！
 
 服务说明：
@@ -554,12 +588,12 @@ def stop_realtime_service() -> str:
     3. 停止 watch_folder.py
     """
     import psutil
-    
+
     stopped = []
     errors = []
-    
+
     scripts = ['predictor.py', 'redis_sync.py', 'watch_folder.py']
-    
+
     for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
         try:
             cmdline = proc.info.get('cmdline', [])
@@ -570,7 +604,7 @@ def stop_realtime_service() -> str:
             pass
         except Exception as e:
             errors.append(str(e))
-    
+
     if stopped:
         return f"✅ 已停止实时监控服务！\n\n停止的进程: {len(stopped)}个"
     else:

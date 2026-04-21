@@ -359,7 +359,6 @@ async def upload_log_file(file: UploadFile = File(...)):
             print(f"[Upload] Kafka连接: {kafka_config['bootstrap_servers']}, Topic: {topic}")
             print(f"[Upload] 开始发送 {len(df)} 条记录...")
 
-
             for _, row in df.iterrows():
                 record = {'batch_id': batch_id, 'block_id': str(row.get('BlockId', row.get('block_id', '')))}
                 for i in range(1, 30):
@@ -468,25 +467,49 @@ async def get_offline_batches():
 @app.get("/api/realtime/anomalies")
 async def get_realtime_anomalies(limit: int = 10):
     """
-    获取实时异常数据（从Redis/ClickHouse）
+    获取实时异常数据（从Redis/ClickHouse），包含事件分布统计
     """
     import yaml
     import clickhouse_connect
     import redis
 
     config_dir = get_abs_path("config")
-    
+
     # ClickHouse配置
     ch_config_path = os.path.join(config_dir, "clickhouse.yaml")
     with open(ch_config_path, 'r', encoding='utf-8') as f:
         ch_config = yaml.safe_load(f)['clickhouse']['online']
-    
+
     # Redis配置
     redis_config_path = os.path.join(config_dir, "redis.yaml")
     with open(redis_config_path, 'r', encoding='utf-8') as f:
         redis_config = yaml.safe_load(f)['redis']
 
     try:
+        # 连接ClickHouse获取事件分布统计
+        client = clickhouse_connect.get_client(
+            host=ch_config['host'],
+            port=ch_config.get('http_port', 8123),
+            username=ch_config.get('username', 'default'),
+            password=ch_config.get('password', '')
+        )
+
+        # 获取事件分布统计（从block_event_stats表）
+        event_query = """
+        SELECT 
+            event_id,
+            sum(cnt) as total_count
+        FROM {db}.block_event_stats
+        GROUP BY event_id
+        ORDER BY total_count DESC
+        """.format(db=ch_config['database'])
+        event_df = client.query_df(event_query)
+
+        event_distribution = {}
+        if not event_df.empty:
+            for _, row in event_df.iterrows():
+                event_distribution[row['event_id']] = int(row['total_count'])
+
         # 优先从Redis获取
         r = redis.Redis(
             host=redis_config['host'],
@@ -495,13 +518,13 @@ async def get_realtime_anomalies(limit: int = 10):
             password=redis_config.get('password'),
             decode_responses=True
         )
-        
+
         key_prefix = redis_config.get('key_prefix', 'anomaly:')
         top_key = key_prefix + redis_config['keys']['top']
-        
+
         # 从Redis获取Top N
         top_anomalies = r.zrevrange(top_key, 0, limit - 1, withscores=True)
-        
+
         if top_anomalies:
             results = []
             for block_id, score in top_anomalies:
@@ -512,16 +535,13 @@ async def get_realtime_anomalies(limit: int = 10):
                     'anomaly_score': score,
                     **detail
                 })
-            return {"source": "redis", "anomalies": results}
-        
+            return {
+                "source": "redis",
+                "anomalies": results,
+                "event_distribution": event_distribution
+            }
+
         # Redis无数据，从ClickHouse获取
-        client = clickhouse_connect.get_client(
-            host=ch_config['host'],
-            port=ch_config.get('http_port', 8123),
-            username=ch_config.get('username', 'default'),
-            password=ch_config.get('password', '')
-        )
-        
         query = f"""
         SELECT block_id, anomaly_score, detected_at
         FROM {ch_config['database']}.anomaly_blocks
@@ -529,12 +549,21 @@ async def get_realtime_anomalies(limit: int = 10):
         LIMIT {limit}
         """
         df = client.query_df(query)
-        
+
         if not df.empty:
-            return {"source": "clickhouse", "anomalies": df.to_dict('records')}
-        
-        return {"source": "none", "anomalies": [], "message": "暂无实时异常数据"}
-        
+            return {
+                "source": "clickhouse",
+                "anomalies": df.to_dict('records'),
+                "event_distribution": event_distribution
+            }
+
+        return {
+            "source": "none",
+            "anomalies": [],
+            "event_distribution": event_distribution,
+            "message": "暂无实时异常数据"
+        }
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取实时异常失败: {str(e)}")
 
