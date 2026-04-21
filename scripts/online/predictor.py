@@ -34,9 +34,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger('realtime_predictor')
 
+
 def load_config():
     config = {}
-    
+
     ch_path = os.path.join(config_dir, 'clickhouse.yaml')
     if os.path.exists(ch_path):
         with open(ch_path, 'r', encoding='utf-8') as f:
@@ -48,7 +49,7 @@ def load_config():
                 'password': ch.get('password', ''),
                 'db': ch.get('database', 'online')
             }
-    
+
     redis_path = os.path.join(config_dir, 'redis.yaml')
     if os.path.exists(redis_path):
         with open(redis_path, 'r', encoding='utf-8') as f:
@@ -59,15 +60,15 @@ def load_config():
                 'db': r.get('db', 0),
                 'password': r.get('password')
             }
-    
+
     model_base = os.path.join(project_root, 'BackUp', 'Preprocess_File')
     config['model_path'] = os.path.join(model_base, 'block_anomaly_model.pkl')
     config['scaler_path'] = os.path.join(model_base, 'scaler.pkl')
-    
+
     config['predict_interval'] = 30
     config['anomaly_threshold'] = 0.5
     config['top_n'] = 10
-    
+
     return config
 
 
@@ -86,7 +87,8 @@ class RealtimePredictor:
             username=self.config['clickhouse'].get('username', 'default'),
             password=self.config['clickhouse'].get('password', '')
         )
-        logger.info(f"ClickHouse 连接成功: {self.config['clickhouse']['host']}:{self.config['clickhouse'].get('http_port', 8123)}")
+        logger.info(
+            f"ClickHouse 连接成功: {self.config['clickhouse']['host']}:{self.config['clickhouse'].get('http_port', 8123)}")
 
     def connect_redis(self):
         try:
@@ -114,6 +116,7 @@ class RealtimePredictor:
             with open(state_file, 'r') as f:
                 return f.read().strip()
         return (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')
+
     def save_last_predict_time(self, ts):
         state_file = os.path.join(script_dir, '.last_predict_time')
         with open(state_file, 'w') as f:
@@ -165,7 +168,7 @@ class RealtimePredictor:
     def predict_and_insert(self, df):
         if df.empty:
             return []
-        
+
         feature_cols = [f'E{i}' for i in range(1, 30)]
         X = df[feature_cols].fillna(0).astype(float)
         X_scaled = self.scaler.transform(X)
@@ -177,34 +180,37 @@ class RealtimePredictor:
             if score > self.config['anomaly_threshold']:
                 record = {
                     'block_id': str(row['block_id']),
-                    **{f'E{i}': int(row.get(f'E{i}', 0)) for i in range(1, 30)},
-                    'anomaly_score': float(score),
-                    'detected_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
                 }
+                # 确保E1-E29转换为整数
+                for i in range(1, 30):
+                    e_col = f'E{i}'
+                    record[e_col] = int(row.get(e_col, 0) or 0)
+                record['anomaly_score'] = float(score)
+                record['detected_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
                 anomalies.append(record)
-        
+
         if anomalies:
             self.ch_client.insert_df('online.anomaly_blocks', pd.DataFrame(anomalies))
             logger.info(f"插入 {len(anomalies)} 条异常记录")
-        
+
         return anomalies
 
     def update_redis(self, anomalies):
         if not self.redis_client or not anomalies:
             return
-        
+
         pipe = self.redis_client.pipeline()
         for rec in anomalies:
             block_id = rec['block_id']
             score = rec['anomaly_score']
             pipe.zadd('anomaly:top', {block_id: score})
-            
+
             detail = {f'E{i}': rec[f'E{i}'] for i in range(1, 30)}
             detail['anomaly_score'] = score
             pipe.hset(f'anomaly:detail:{block_id}', mapping=detail)
             pipe.expire(f'anomaly:detail:{block_id}', 3600)
-        
-        pipe.zremrangebyrank('anomaly:top', 0, -(self.config['top_n']+1))
+
+        pipe.zremrangebyrank('anomaly:top', 0, -(self.config['top_n'] + 1))
         pipe.execute()
         logger.info(f"Redis Top {self.config['top_n']} 异常更新完成")
 
@@ -218,23 +224,23 @@ class RealtimePredictor:
             try:
                 last_ts = self.get_last_predict_time()
                 logger.info(f"查询增量数据，上次处理时间: {last_ts}")
-                
+
                 df = self.fetch_incremental_blocks(last_ts)
                 if not df.empty:
                     logger.info(f"获取到 {len(df)} 个 block 的新特征")
                     anomalies = self.predict_and_insert(df)
                     if anomalies:
                         self.update_redis(anomalies)
-                    
+
                     new_last_ts = df['last_updated'].max()
                     self.save_last_predict_time(new_last_ts)
                     logger.info(f"更新最后处理时间为: {new_last_ts}")
                 else:
                     logger.info("无新数据")
-                    
+
             except Exception as e:
                 logger.exception(f"预测循环出错: {e}")
-            
+
             time.sleep(self.config['predict_interval'])
 
 

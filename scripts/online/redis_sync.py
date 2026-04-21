@@ -48,11 +48,21 @@ while True:
     if not df.empty:
         pipe = r.pipeline()
         for _, row in df.iterrows():
-            pipe.zadd(key_prefix + redis_config['keys']['top'], {row['block_id']: row['anomaly_score']})
-            pipe.hset(key_prefix + redis_config['keys']['detail'] + row['block_id'], mapping={
-                **{f'E{i}': row[f'E{i}'] for i in range(1,30)},
-                'anomaly_score': row['anomaly_score']
-            })
+            block_id = str(row['block_id'])
+            score = float(row['anomaly_score'])
+
+            # 存储Top N排序集
+            pipe.zadd(key_prefix + redis_config['keys']['top'], {block_id: score})
+
+            # 存储详情Hash，确保E1-E29转换为整数
+            detail = {}
+            for i in range(1, 30):
+                e_col = f'E{i}'
+                detail[e_col] = int(row.get(e_col, 0))
+            detail['anomaly_score'] = score
+
+            pipe.hset(key_prefix + redis_config['keys']['detail'] + block_id, mapping=detail)
+
         pipe.zremrangebyrank(key_prefix + redis_config['keys']['top'], 0, -11)
         pipe.execute()
         new_sync = df['detected_at'].max()

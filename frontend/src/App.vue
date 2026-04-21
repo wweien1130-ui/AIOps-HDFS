@@ -161,17 +161,20 @@
                     </template>
                   </el-table-column>
                   <el-table-column prop="label" label="标签" width="70" />
-                  <el-table-column label="E事件" min-width="280">
+                  <el-table-column label="E事件" min-width="300">
                     <template #default="{ row }">
                       <el-tag
-                        v-for="(evt, idx) in (row.events || []).slice(0, 5)"
+                        v-for="(evt, idx) in (row.events || []).filter(e => e.count > 0).slice(0, 6)"
                         :key="idx"
                         size="small"
-                        type="danger"
-                        style="margin-right: 2px;"
+                        :type="evt.count > 2 ? 'danger' : 'warning'"
+                        style="margin-right: 4px; margin-bottom: 2px;"
                       >
                         {{ evt.event_id }}:{{ evt.count }}
                       </el-tag>
+                      <span v-if="(row.events || []).filter(e => e.count > 0).length > 6" style="color: #909399; font-size: 12px;">
+                        +{{ (row.events || []).filter(e => e.count > 0).length - 6 }}
+                      </span>
                     </template>
                   </el-table-column>
                 </el-table>
