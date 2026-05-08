@@ -10,7 +10,7 @@ import platform
 
 
 class KafkaConnectionVerifier:
-    def __init__(self, bootstrap_servers='192.168.115.129:9094'):
+    def __init__(self, bootstrap_servers='192.168.115.129:9092'):
         self.bootstrap_servers = bootstrap_servers
         self.host, self.port = bootstrap_servers.split(':')
         self.port = int(self.port)

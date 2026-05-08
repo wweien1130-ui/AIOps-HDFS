@@ -15,7 +15,7 @@ vector_store:
 
   #聊天模型
 #  chat_model : "qwen-turbo"
-  chat_model : "tongyi-xiaomi-analysis-pro"
+  chat_model : "deepseek-v4-flash"
 
   # 嵌入模型
   embedding:

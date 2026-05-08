@@ -140,3 +140,41 @@ secrets.json
 # Chroma向量数据库
 chroma_db/
 chroma_data/
+
+# FAISS 索引文件
+*.faiss
+*.faiss/
+
+# 向量嵌入文件
+embeddings/
+*.embedding
+*.vec
+
+# AI/ML 模型文件
+*.onnx
+*.mlmodel
+*.tflite
+*.pb
+*.ckpt
+*.safetensors
+checkpoints/
+
+# 数据库文件
+*.db
+*.sqlite
+*.sqlite3
+*.mdb
+
+# 缓存目录
+.cache/
+*.cache
+
+# 大文件 (使用 Git LFS 管理)
+# *.pth
+# *.h5
+# *.model
+
+# 上传的文件目录
+uploads/
+user_uploads/
+temp_uploads/
