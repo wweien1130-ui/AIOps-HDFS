@@ -278,6 +278,7 @@ function newChat() {
 }
 
 let realtimeTimer = null
+let isFetching = false
 
 const gaugeOption = computed(() => ({
   series: [
@@ -425,10 +426,14 @@ async function fetchAnalyzeData() {
 }
 
 async function fetchRealtimeAnomalies() {
+  const now = new Date()
+  const timeStr = now.toLocaleTimeString()
+  console.log(`[${timeStr}] 开始获取实时异常...`)
   try {
     const response = await fetch(`${API_BASE}/realtime/anomalies?limit=10`)
     const result = await response.json()
-    
+    console.log(`[${timeStr}] 获取成功，数据来源: ${result.source}`)
+
     if (result.anomalies && result.anomalies.length > 0) {
       const eventDist = result.event_distribution || {}
       const topAnomalies = result.anomalies.map(a => {
@@ -467,6 +472,9 @@ async function fetchRealtimeAnomalies() {
         message: `实时异常：发现 ${topAnomalies.length} 个异常块（${result.source}）`,
         type: 'success'
       })
+      if (systemLogs.value.length > 10) {
+        systemLogs.value.pop()
+      }
     } else {
       systemLogs.value.unshift({
         time: new Date().toLocaleTimeString(),
@@ -755,10 +763,20 @@ function speakLastResponse() {
 
 function handleRealtimeChange(val) {
   if (val) {
-    fetchRealtimeAnomalies()
     realtimeTimer = setInterval(async () => {
-      await fetchRealtimeAnomalies()
-      updateCharts()
+      if (isFetching) {
+        console.log('上次请求还未完成，跳过本次')
+        return
+      }
+      isFetching = true
+      try {
+        await fetchRealtimeAnomalies()
+        updateCharts()
+      } catch (e) {
+        console.error('实时刷新失败:', e)
+      } finally {
+        isFetching = false
+      }
     }, 5000)
     ElMessage.success('实时模式已开启，每5秒刷新一次')
   } else {

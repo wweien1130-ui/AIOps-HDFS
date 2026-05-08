@@ -65,7 +65,7 @@ def load_config():
     config['model_path'] = os.path.join(model_base, 'block_anomaly_model.pkl')
     config['scaler_path'] = os.path.join(model_base, 'scaler.pkl')
 
-    config['predict_interval'] = 30
+    config['predict_interval'] =  5
     config['anomaly_threshold'] = 0.5
     config['top_n'] = 10
 

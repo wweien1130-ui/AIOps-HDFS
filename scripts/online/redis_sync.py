@@ -68,4 +68,4 @@ while True:
         new_sync = df['detected_at'].max()
         r.set(key_prefix + redis_config['keys']['sync_time'], str(new_sync))
         last_sync = new_sync
-    time.sleep(10)
+    time.sleep(5)
