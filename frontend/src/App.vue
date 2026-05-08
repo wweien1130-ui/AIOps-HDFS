@@ -430,29 +430,38 @@ async function fetchRealtimeAnomalies() {
     const result = await response.json()
     
     if (result.anomalies && result.anomalies.length > 0) {
-      const topAnomalies = result.anomalies.map(a => ({
-        block_id: a.block_id,
-        probability: parseFloat(a.anomaly_score) || 0,
-        events: Object.entries(a)
+      const eventDist = result.event_distribution || {}
+      const topAnomalies = result.anomalies.map(a => {
+        const events = Object.entries(a)
           .filter(([k]) => k.startsWith('E'))
           .map(([k, v]) => ({ event_id: k, count: parseInt(v) || 0 }))
-      }))
-      // 计算E事件分布
-const eventDistribution = {}
-topAnomalies.forEach(anomaly => {
-  anomaly.events.forEach(evt => {
-    eventDistribution[evt.event_id] = (eventDistribution[evt.event_id] || 0) + evt.count
-  })
-})
-
-analyzeData.value = {
-  ...analyzeData.value,
-  top_anomalies: topAnomalies,
-  anomaly_count: topAnomalies.length,
-  total_blocks: 100,
-  anomaly_ratio: topAnomalies.length / 100,
-  event_distribution: eventDistribution
-}
+        if (events.length === 0) {
+          Object.entries(eventDist).forEach(([k, v]) => {
+            if (k.startsWith('E')) events.push({ event_id: k, count: parseInt(v) || 0 })
+          })
+          events.sort((a, b) => b.count - a.count)
+          events.splice(6)
+        }
+        return {
+          block_id: a.block_id,
+          probability: parseFloat(a.anomaly_score) || 0,
+          events: events.filter(e => e.count > 0)
+        }
+      })
+      const eventDistribution = {}
+      topAnomalies.forEach(anomaly => {
+        anomaly.events.forEach(evt => {
+          eventDistribution[evt.event_id] = (eventDistribution[evt.event_id] || 0) + evt.count
+        })
+      })
+      analyzeData.value = {
+        ...analyzeData.value,
+        top_anomalies: topAnomalies,
+        anomaly_count: topAnomalies.length,
+        total_blocks: 100,
+        anomaly_ratio: topAnomalies.length / 100,
+        event_distribution: eventDistribution
+      }
       systemLogs.value.unshift({
         time: new Date().toLocaleTimeString(),
         message: `实时异常：发现 ${topAnomalies.length} 个异常块（${result.source}）`,
@@ -747,8 +756,9 @@ function speakLastResponse() {
 function handleRealtimeChange(val) {
   if (val) {
     fetchRealtimeAnomalies()
-    realtimeTimer = setInterval(() => {
-      fetchRealtimeAnomalies()
+    realtimeTimer = setInterval(async () => {
+      await fetchRealtimeAnomalies()
+      updateCharts()
     }, 5000)
     ElMessage.success('实时模式已开启，每5秒刷新一次')
   } else {
