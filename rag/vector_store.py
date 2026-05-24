@@ -30,6 +30,7 @@ class VectorStoreService:
         return self.vector_store.as_retriever(search_kwargs={"k":chroma_config["performance"]["k"]})
 
     def load_document(self):
+
         def check_md5_hex(md5_for_check:str):
             if not os.path.exists(get_abs_path(chroma_config["performance"]["md5_hex_store"])):
                 open(get_abs_path(chroma_config["performance"]["md5_hex_store"]), "w",encoding="utf-8").close()
@@ -53,10 +54,13 @@ class VectorStoreService:
             elif read_path.endswith(".pdf"):
                 return pdf_loader(read_path)
             return []
+        
+
+        # 读取 hdfs_knowledge/ 目录下的文件
 
         allowed_files_path:list[str] = listdir_with_allowed_type(
-            get_abs_path(chroma_config["performance"]["data_path"]),
-            tuple(chroma_config["performance"]["allow_knowledge_file_type"])
+            get_abs_path(chroma_config["performance"]["data_path"]),  # ← hdfs_knowledge
+            tuple(chroma_config["performance"]["allow_knowledge_file_type"])  # ← .txt, .pdf
         )
 
         for path in allowed_files_path:
@@ -66,18 +70,20 @@ class VectorStoreService:
                 continue
 
             try:
+
+                 # 1. 加载文档
                 documents:list[Document] = get_file_documents(path)
 
                 if not documents:
                     logger.warning(f"[加载知识库]{path}内容为空，跳过加载)")
                     continue
-
+                # 2. 分割文本
                 split_documents:list[Document] = self.spliter.split_documents(documents)
 
                 if not split_documents:
                     logger.warning(f"[加载知识库]{path}内容分割为空，跳过加载)")
                     continue
-
+                # 3. 存入向量数据库
                 self.vector_store.add_documents(split_documents)
 
                 save_md5_hex(md5_hex)

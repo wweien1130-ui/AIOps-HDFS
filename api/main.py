@@ -14,6 +14,9 @@ from typing import Optional, List, Dict, Any
 from utils.path_tool import get_abs_path
 from agent.react_agent import ReactAgent
 
+
+HDFS_BASE_DIR = get_abs_path("BackUp/Preprocess_File")
+
 app = FastAPI(title="AI Application API", version="1.0.0")
 
 app.add_middleware(
@@ -43,46 +46,36 @@ model_cache = {
 }
 
 
-@app.lifespan_manager("startup")
+@app.on_event("startup")
 async def startup_event():
-    """启动时预加载模型和数据（不强制要求模型存在）"""
+    """只加载预测必需的模型和标准化器"""
     import joblib
-    from model.mlp_model import load_mlp_model
 
-    print("🚀 正在加载模型和数据，请稍候...")
+    model_path = os.path.normpath(os.path.join(HDFS_BASE_DIR, "block_anomaly_model.pkl"))
+    scaler_path = os.path.normpath(os.path.join(HDFS_BASE_DIR, "scaler.pkl"))
+  
+    print(f"scaler_path = {scaler_path}")
+    print(f"文件存在: {os.path.exists(scaler_path)}")
+    
 
-    matrix_file = get_abs_path("BackUp/File/Event_occurrence_matrix.csv")
-    # model_path = get_abs_path("LogMLP_Model.pth")
-    scaler_path = get_abs_path("BackUp/Preprocess_File/scaler.pkl")
-    template_file = get_abs_path("BackUp/File/HDFS.log_templates.csv")
 
     try:
-        # 加载特征矩阵（必须）
-        if os.path.exists(matrix_file):
-            data = pd.read_csv(matrix_file)
-            model_cache["data"] = data
-            print(f"✅ 特征矩阵加载完成: {len(data)} 行")
+        # 只加载预测必须的
+        if os.path.exists(model_path):
+            model_cache["model"] = joblib.load(model_path)
+            print("✅ 模型加载完成")
         else:
-            print("⚠️ 特征矩阵文件不存在，将在检测时预处理")
+            print("⚠️ 模型不存在，将在首次检测时训练")
 
-        # 加载标准化器（可选）
         if os.path.exists(scaler_path):
             model_cache["scaler"] = joblib.load(scaler_path)
             print("✅ 标准化器加载完成")
         else:
             print("⚠️ 标准化器不存在，将在首次检测时训练")
 
-        # 加载日志模板（可选）
-        if os.path.exists(template_file):
-            model_cache["templates"] = pd.read_csv(template_file)
-            print("✅ 日志模板加载完成")
-        else:
-            print("⚠️ 日志模板文件不存在")
-
-        print("🎉 基础资源加载完毕！")
+        print("🎉 启动完成！")
     except Exception as e:
-        print(f"⚠️ 启动时部分资源加载失败: {e}")
-        print("💡 系统仍可运行，检测时会自动训练模型")
+        print(f"⚠️ 启动加载失败: {e}")
 
 
 class AnalyzeRequest(BaseModel):
@@ -108,9 +101,9 @@ class OCRResponse(BaseModel):
     error: Optional[str] = None
 
 
-@app.get("/")
-async def root():
-    return {"message": "AI Application API", "version": "1.0.0"}
+# @app.get("/")
+# async def root():
+#     return {"message": "AI Application API", "version": "1.0.0"}
 
 
 @app.get("/api/health")
@@ -416,53 +409,53 @@ async def upload_log_file(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"上传失败: {str(e)}")
 
 
-@app.get("/api/offline/batches")
-async def get_offline_batches():
-    """
-    获取所有离线批次列表
-    """
-    import yaml
-    import clickhouse_connect
+# @app.get("/api/offline/batches")
+# async def get_offline_batches():
+#     """
+#     获取所有离线批次列表
+#     """
+#     import yaml
+#     import clickhouse_connect
 
-    config_dir = get_abs_path("config")
-    ch_config_path = os.path.join(config_dir, "clickhouse.yaml")
-    with open(ch_config_path, 'r') as f:
-        ch_config = yaml.safe_load(f)['clickhouse']['offline']
+#     config_dir = get_abs_path("config")
+#     ch_config_path = os.path.join(config_dir, "clickhouse.yaml")
+#     with open(ch_config_path, 'r') as f:
+#         ch_config = yaml.safe_load(f)['clickhouse']['offline']
 
-    try:
-        client = clickhouse_connect.get_client(
-            host=ch_config['host'],
-            port=ch_config.get('http_port', 8123),
-            username=ch_config.get('username', 'default'),
-            password=ch_config.get('password', '')
-        )
+#     try:
+#         client = clickhouse_connect.get_client(
+#             host=ch_config['host'],
+#             port=ch_config.get('http_port', 8123),
+#             username=ch_config.get('username', 'default'),
+#             password=ch_config.get('password', '')
+#         )
 
-        # 查询所有批次
-        query = """
-        SELECT batch_id, count() as block_count, min(detected_at) as first_seen, max(detected_at) as last_seen
-        FROM offline.block_event_stats
-        GROUP BY batch_id
-        ORDER BY batch_id DESC
-        LIMIT 20
-        """
-        result = client.query_df(query)
-        batches = result.to_dict('records')
+#         # 查询所有批次
+#         query = """
+#         SELECT batch_id, count() as block_count, min(detected_at) as first_seen, max(detected_at) as last_seen
+#         FROM offline.block_event_stats
+#         GROUP BY batch_id
+#         ORDER BY batch_id DESC
+#         LIMIT 20
+#         """
+#         result = client.query_df(query)
+#         batches = result.to_dict('records')
 
-        # 查询每个批次的异常数量
-        anomaly_query = """
-        SELECT batch_id, count() as anomaly_count
-        FROM offline.anomaly_blocks
-        GROUP BY batch_id
-        """
-        anomaly_result = client.query_df(anomaly_query)
-        anomaly_counts = dict(zip(anomaly_result['batch_id'], anomaly_result['anomaly_count']))
+#         # 查询每个批次的异常数量
+#         anomaly_query = """
+#         SELECT batch_id, count() as anomaly_count
+#         FROM offline.anomaly_blocks
+#         GROUP BY batch_id
+#         """
+#         anomaly_result = client.query_df(anomaly_query)
+#         anomaly_counts = dict(zip(anomaly_result['batch_id'], anomaly_result['anomaly_count']))
 
-        for b in batches:
-            b['anomaly_count'] = anomaly_counts.get(b['batch_id'], 0)
+#         for b in batches:
+#             b['anomaly_count'] = anomaly_counts.get(b['batch_id'], 0)
 
-        return {"success": True, "batches": batches}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"查询失败: {str(e)}")
+#         return {"success": True, "batches": batches}
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"查询失败: {str(e)}")
 
 
 @app.get("/api/realtime/anomalies")
@@ -574,29 +567,29 @@ async def get_realtime_anomalies(limit: int = 10):
         raise HTTPException(status_code=500, detail=f"获取实时异常失败: {str(e)}")
 
 
-@app.post("/api/offline/process/{batch_id}")
-async def process_offline_batch(batch_id: str):
-    """
-    处理指定batch_id的离线数据（运行预测）
-    """
-    import subprocess
-    import threading
+# @app.post("/api/offline/process/{batch_id}")
+# async def process_offline_batch(batch_id: str):
+#     """
+#     处理指定batch_id的离线数据（运行预测）
+#     """
+#     import subprocess
+#     import threading
 
-    def run_predictor():
-        try:
-            # 调用离线预测脚本
-            script_path = get_abs_path("scripts/offline/predictor.py")
-            subprocess.run(['python', script_path], check=True)
-        except Exception as e:
-            print(f"离线预测失败: {e}")
+#     def run_predictor():
+#         try:
+#             # 调用离线预测脚本
+#             script_path = get_abs_path("scripts/offline/predictor.py")
+#             subprocess.run(['python', script_path], check=True)
+#         except Exception as e:
+#             print(f"离线预测失败: {e}")
 
-    # 异步执行
-    threading.Thread(target=run_predictor, daemon=True).start()
+#     # 异步执行
+#     threading.Thread(target=run_predictor, daemon=True).start()
 
-    return {
-        "success": True,
-        "message": f"开始处理批次 {batch_id}，请稍后查询结果"
-    }
+#     return {
+#         "success": True,
+#         "message": f"开始处理批次 {batch_id}，请稍后查询结果"
+#     }
 
 
 @app.get("/api/export")

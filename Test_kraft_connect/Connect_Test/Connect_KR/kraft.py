@@ -160,7 +160,7 @@ class KafkaConnectionVerifier:
                 'docker', 'exec', 'kafka',
                 '/opt/kafka/bin/kafka-topics.sh',
                 '--create', '--topic', test_topic,
-                '--bootstrap-server', 'localhost:9094',
+                '--bootstrap-server', 'localhost:9092',
                 '--partitions', '3', '--replication-factor', '1'
             ], capture_output=True, text=True)
 
@@ -177,7 +177,7 @@ class KafkaConnectionVerifier:
             result = subprocess.run([
                 'docker', 'exec', 'kafka',
                 '/opt/kafka/bin/kafka-topics.sh',
-                '--list', '--bootstrap-server', 'localhost:9094'
+                '--list', '--bootstrap-server', 'localhost:9092'
             ], capture_output=True, text=True)
 
             if result.returncode == 0:
@@ -250,18 +250,18 @@ def quick_verify():
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(2)
-        result = sock.connect_ex(('192.168.115.129', 9094))
+        result = sock.connect_ex(('192.168.115.129', 9092))
         sock.close()
 
         if result != 0:
-            print("❌ 无法连接到 192.168.115.129:9094")
+            print("❌ 无法连接到 192.168.115.129:9092")
             print("请检查:")
             print("  1. Ubuntu VM 是否运行")
             print("  2. Kafka 容器是否启动: docker ps | grep kafka")
-            print("  3. VMware 端口转发: 主机9094 -> 虚拟机9094")
+            print("  3. VMware 端口转发: 主机9092 -> 虚拟机9092")
             return False
         else:
-            print("✅ 端口 9094 可访问")
+            print("✅ 端口 9092 可访问")
 
     except Exception as e:
         print(f"❌ 网络测试失败: {e}")
@@ -270,7 +270,7 @@ def quick_verify():
     # 测试 Kafka
     try:
         admin = KafkaAdminClient(
-            bootstrap_servers='192.168.115.129:9094',
+            bootstrap_servers='192.168.115.129:9092',
             request_timeout_ms=5000
         )
         topics = admin.list_topics()
@@ -286,8 +286,8 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description='Kafka 连接验证器')
-    parser.add_argument('--host', default='192.168.115.129:9094',
-                        help='Kafka 地址 (默认: 192.168.115.129:9094)')
+    parser.add_argument('--host', default='192.168.115.129:9092',
+                        help='Kafka 地址 (默认: 192.168.115.129:9092)')
     parser.add_argument('--quick', action='store_true',
                         help='快速验证模式')
     args = parser.parse_args()
