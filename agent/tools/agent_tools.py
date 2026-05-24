@@ -14,7 +14,7 @@ if TOOLS_DIR not in sys.path:
 from utils.path_tool import get_abs_path
 
 KNOWLEDGE_DIR = get_abs_path("hdfs_knowledge")
-HDFS_BASE_DIR = get_abs_path("BackUp")
+HDFS_BASE_DIR = get_abs_path("BackUp/File")
 
 # 从 data_preparator.py 导入 prepare_training_data（多级降级策略）
 from data_preparator import prepare_training_data
@@ -296,7 +296,7 @@ def preprocess_hdfs_logs(log_file: str = None) -> str:
     """
     预处理HDFS日志 - 多级降级策略：
 
-    优先级1: 从备份目录复制官方 Event_occurrence_matrix.csv
+    优先级1: 从备份目录复制官方 Event_occurrence_matrix.csv(从data_preparator获得)
     优先级2: 从备份目录复制 training_data.csv
     优先级3: 从备份目录复制 block_features.csv + Event.csv 并合并
     兜底方案: 使用 log_preprocessor.py 本地解析日志文件（最慢）
@@ -421,86 +421,18 @@ def detect_anomaly(threshold: float = 0.3) -> str:
             traceback.print_exc()
             return f"自动训练失败：{str(e)}"
 
-    # 加载模型并检测
-    try:
-        import joblib
-        import pandas as pd
 
-        # 加载数据
-        print(f"[detect_anomaly] 加载数据: {matrix_file}")
-        df = pd.read_csv(matrix_file)
+    from model.inference import predict_anomaly, format_anomaly_report
 
-        # 如果数据量太大，进行采样（只处理前10000条）
-        MAX_SAMPLES = 10000
-        if len(df) > MAX_SAMPLES:
-            print(f"[detect_anomaly] 数据量过大({len(df)}条)，采样前{MAX_SAMPLES}条")
-            df = df.head(MAX_SAMPLES)
-
-        feature_cols = [f'E{i}' for i in range(1, 30)]
-        X = df[feature_cols].fillna(0)
-        print(f"[detect_anomaly] 数据加载完成，共 {len(df)} 条")
-
-        # 加载 sklearn 模型和标准化器
-        print(f"[detect_anomaly] 加载模型: {model_path}")
-        model = joblib.load(model_path)
-        scaler = joblib.load(scaler_path)
-        print(f"[detect_anomaly] 模型加载完成，开始预测...")
-
-        # 预测
-        print(f"[detect_anomaly] 标准化数据...")
-        X_scaled = scaler.transform(X)
-        print(f"[detect_anomaly] 执行预测...")
-        preds = model.predict(X_scaled)
-        print(f"[detect_anomaly] 计算概率...")
-        probs = model.predict_proba(X_scaled)[:, 1]  # 异常概率
-        print(f"[detect_anomaly] 预测完成")
-
-        # 6. 整理结果
-        df['prediction'] = ['Fail' if p == 1 else 'Success' for p in preds]
-        df['anomaly_prob'] = probs
-
-        anomalies = df[df['prediction'] == 'Fail'].sort_values('anomaly_prob', ascending=False)
-        total_anomalies = len(anomalies)
-
-        print(f"[detect_anomaly] 检测完成，发现 {total_anomalies} 个异常")
-
-        if total_anomalies == 0:
-            return f"检测完成：在 {len(df)} 条记录中未发现异常（当前阈值 {threshold}）。系统状态正常。"
-
-        # 简化输出，跳过 RAG 查询（太慢）
-        anomaly_blocks = anomalies.head(10)
-
-        # 构建完整报告
-        output = f"### 🔍 异常检测摘要报告\n\n"
-        output += f"- **总检测块数**: {len(df)}\n"
-        output += f"- **发现异常块**: {total_anomalies}\n"
-        output += f"- **异常比例**: {(total_anomalies / len(df)):.2%}\n"
-        output += f"- **当前判定阈值**: {threshold}\n"
-        output += f"\n---\n\n"
-        output += f"#### 🚨 前 10 条高危异常:\n\n"
-
-        for i, (_, row) in enumerate(anomaly_blocks.iterrows(), 1):
-            # 获取E事件详情
-            events_str = ""
-            for j in range(1, 30):
-                col = f'E{j}'
-                if col in row and row[col] > 0:
-                    events_str += f"{col}:{int(row[col])} "
-            output += f"**{i}. BlockID**: `{row['BlockId']}` | **异常概率**: `{row['anomaly_prob']:.4f}` | **标签**: {row['Label']} | **事件**: {events_str}\n"
-
-        if total_anomalies > 10:
-            output += f"---\n\n"
-            output += f"> **提示**: 还有 {total_anomalies - 10} 条异常记录未在此列出。"
-
-        return output
-
-    except Exception as e:
-        import traceback
-        print(f"[detect_anomaly] 发生错误: {e}")
-        traceback.print_exc()
-        error_msg = f"异常检测运行时发生崩溃: {str(e)}"
-        return error_msg
-
+    # 调用预测函数
+    result = predict_anomaly(
+        model_path=model_path,
+        scaler_path=scaler_path,
+        matrix_file=matrix_file,
+        threshold=threshold
+    )
+        # 格式化报告
+    return format_anomaly_report(result)
 
 @tool(description="查询当前实时异常（从Redis/ClickHouse获取）。如无实时数据则返回提示。")
 def get_realtime_anomalies(limit: int = 10) -> str:

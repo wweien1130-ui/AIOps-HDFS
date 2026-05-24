@@ -2,7 +2,7 @@ import sys
 import os
 import json
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pandas as pd
 
@@ -43,7 +43,7 @@ model_cache = {
 }
 
 
-@app.on_event("startup")
+@app.lifespan_manager("startup")
 async def startup_event():
     """启动时预加载模型和数据（不强制要求模型存在）"""
     import joblib
@@ -52,7 +52,7 @@ async def startup_event():
     print("🚀 正在加载模型和数据，请稍候...")
 
     matrix_file = get_abs_path("BackUp/File/Event_occurrence_matrix.csv")
-    model_path = get_abs_path("LogMLP_Model.pth")
+    # model_path = get_abs_path("LogMLP_Model.pth")
     scaler_path = get_abs_path("BackUp/Preprocess_File/scaler.pkl")
     template_file = get_abs_path("BackUp/File/HDFS.log_templates.csv")
 
@@ -319,7 +319,7 @@ if __name__ == "__main__":
 @app.post("/api/upload")
 async def upload_log_file(file: UploadFile = File(...)):
     """
-    上传原始日志文件：
+    上传原始日志文件(离线批次)：
     - CSV文件：发送到Kafka offline topic
     - 其他文件：直接保存
     """
@@ -336,14 +336,15 @@ async def upload_log_file(file: UploadFile = File(...)):
     with open(kafka_config_path, 'r') as f:
         kafka_config = yaml.safe_load(f)['kafka']
 
-    upload_dir = get_abs_path("HDFS_v1")
+    """ upload_dir = get_abs_path("HDFS_v1")  
     os.makedirs(upload_dir, exist_ok=True)
-    file_path = os.path.join(upload_dir, file.filename)
+    file_path = os.path.join(upload_dir, file.filename) """
 
     try:
         contents = await file.read()
         filename_lower = file.filename.lower()
 
+        # csv文件的处理方式 - 发送到Kafka offline topic
         if filename_lower.endswith('.csv'):
             # CSV: 发送到Kafka offline topic
             df = pd.read_csv(StringIO(contents.decode('utf-8')))
@@ -604,51 +605,84 @@ async def export_anomalies_csv():
     导出异常日志为CSV文件
     """
     import io
+    import yaml
+    import clickhouse_connect
+    import redis
     from fastapi.responses import StreamingResponse
 
-    if model_cache["model"] is None or model_cache["scaler"] is None:
-        raise HTTPException(status_code=503, detail="模型尚未加载")
-
     try:
-        from model.mlp_model import detect_anomalies
+        config_dir = get_abs_path("config")
 
-        results = detect_anomalies(
-            model=model_cache["model"],
-            scaler=model_cache["scaler"],
-            data_file=None,
-            threshold=0.3,
-            template_file=None,
-            data=model_cache["data"]
+        # ClickHouse配置
+        with open(os.path.join(config_dir, "clickhouse.yaml"), 'r', encoding='utf-8') as f:
+            ch_config = yaml.safe_load(f)['clickhouse']['online']
+
+        # Redis配置
+        with open(os.path.join(config_dir, "redis.yaml"), 'r', encoding='utf-8') as f:
+            redis_config = yaml.safe_load(f)['redis']
+
+        # 连接Redis获取Top 10异常
+        r = redis.Redis(
+            host=redis_config['host'],
+            port=redis_config['port'],
+            db=redis_config.get('db', 0),
+            password=redis_config.get('password'),
+            decode_responses=True
         )
 
-        # 创建CSV
-        df = pd.DataFrame(results)
+        key_prefix = redis_config.get('key_prefix', 'anomaly:')
+        top_key = key_prefix + redis_config['keys']['top']
+        top_anomalies = r.zrevrange(top_key, 0, 9, withscores=True)
 
-        # 添加解决方案（从RAG获取）
-        from agent.tools.agent_tools import rag_retrieve
-        solutions = []
-        for _, row in df.head(10).iterrows():
-            try:
-                solution = rag_retrieve.invoke(f"HDFS BlockId {row['block_id']} 异常解决方案")
-                solutions.append(str(solution)[:200] if solution else "无")
-            except:
-                solutions.append("无")
+        if top_anomalies:
+            results = []
+            for block_id, score in top_anomalies:
+                detail_key = key_prefix + redis_config['keys']['detail'] + block_id
+                detail = r.hgetall(detail_key)
+                row = {
+                    'block_id': block_id,
+                    'anomaly_score': score,
+                    **detail
+                }
+                results.append(row)
+            df = pd.DataFrame(results)
+        else:
+            # Redis无数据，从ClickHouse获取
+            client = clickhouse_connect.get_client(
+                host=ch_config['host'],
+                port=ch_config.get('http_port', 8123),
+                username=ch_config.get('username', 'default'),
+                password=ch_config.get('password', '')
+            )
+            query = f"""
+            SELECT block_id, anomaly_score, detected_at,
+                E1, E2, E3, E4, E5, E6, E7, E8, E9, E10,
+                E11, E12, E13, E14, E15, E16, E17, E18, E19, E20,
+                E21, E22, E23, E24, E25, E26, E27, E28, E29
+            FROM {ch_config['database']}.anomaly_blocks
+            ORDER BY anomaly_score DESC
+            LIMIT 100
+            """
+            df = client.query_df(query)
 
-        # 补齐解决方案列表
-        while len(solutions) < len(df):
-            solutions.append("")
+        # 确保所有E事件列为数值类型
+        for i in range(1, 30):
+            e_col = f'E{i}'
+            if e_col in df.columns:
+                df[e_col] = pd.to_numeric(df[e_col], errors='coerce').fillna(0).astype(int)
 
-        df['solution'] = solutions
-
-        # 生成CSV
         csv_buffer = io.StringIO()
-        df.to_csv(csv_buffer, index=False, encoding='utf-8-sig')
-
+        df.to_csv(csv_buffer, index=False)
         csv_buffer.seek(0)
+        csv_content = csv_buffer.getvalue()
+
+        # 添加UTF-8 BOM，确保Windows Excel正确识别中文
+        bom = '\ufeff'
+        csv_content = bom + csv_content
 
         return StreamingResponse(
-            iter([csv_buffer.getvalue()]),
-            media_type="text/csv",
+            iter([csv_content]),
+            media_type="text/csv; charset=utf-8",
             headers={
                 "Content-Disposition": f"attachment; filename=anomalies_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv"
             }
