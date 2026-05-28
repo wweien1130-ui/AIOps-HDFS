@@ -1,57 +1,63 @@
-
 from utils.path_tool import get_abs_path
 from utils.config_handler import prompts_config
 from utils.logger_handler import logger
 
-def load_system_prompts():
+
+def _load_prompt_file(key: str, fallback: str = "") -> str:
+    """通用提示词加载器，统一处理异常和空内容回退。"""
     try:
-        system_prompt_path = get_abs_path(prompts_config["prompt_files"]["main_prompt"])
-    except KeyError as e:
-        logger.error(f"[load_system_prompts] 在yaml配置中缺少main_prompt路径: {e}")
-        return "你是一位HDFS诊断专家。"
+        path = get_abs_path(prompts_config["prompt_files"][key])
+    except KeyError:
+        logger.error(f"[prompt_loader] 配置中缺少键: {key}")
+        return fallback
 
     try:
-        with open(system_prompt_path,"r",encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8") as f:
             content = f.read()
-        logger.info(f"[load_system_prompts] 成成功加载岗位说明书提示词: {system_prompt_path}")
-        return content if content else "你是一位HDFS诊断专家。"
-    except FileNotFoundError as e:
-        logger.error(f"[load_system_prompts] 提示词文件不存在: {system_prompt_path}")
-        return "你是一位HDFS诊断专家。"
-
-
-def load_rag_prompts():
-    try:
-        rag_prompt_path = get_abs_path(prompts_config["prompt_files"]["rag_summarize"])
-    except KeyError as e:
-        logger.error(f"[load_rag_prompts] 在yaml配置中缺少rag_summarize路径: {e}")
-        return None
-
-    try:
-        with open(rag_prompt_path,"r",encoding="utf-8") as f:
-            content = f.read()
-        logger.info(f"[load_rag_prompts] 成成功加载rag_summarize提示词: {rag_prompt_path}")
+        if not content:
+            logger.warning(f"[prompt_loader] 提示词文件为空: {path}")
+            return fallback
+        logger.info(f"[prompt_loader] 成功加载: {path}")
         return content
-    except FileNotFoundError as e:
-        logger.error(f"[load_rag_prompts] 提示词文件不存在 {rag_prompt_path}")
-        return None
+    except FileNotFoundError:
+        logger.error(f"[prompt_loader] 提示词文件不存在: {path}")
+        return fallback
 
-def load_report_prompts():
-    try:
-        report_prompt_path = get_abs_path(prompts_config["prompt_files"]["report_prompt"])
-    except KeyError as e:
-        logger.error(f"[load_report_prompts] 在yaml配置中缺少report_prompt路径: {e}")
-        return None
 
-    try:
-       with open(report_prompt_path ,"r",encoding="utf-8") as f:
-           content = f.read()
-           logger.info(f"[load_report_prompts] 成成功加载report_prompt提示词: {report_prompt_path}")
-           return content
-    except FileNotFoundError as e:
-        logger.error(f"[load_report_prompts] 提示词文件不存在 {report_prompt_path}")
-        return None
+def load_system_prompts() -> str:
+    return _load_prompt_file("main_prompt", "你是一位HDFS诊断专家。")
+
+
+def load_rag_prompts() -> str:
+    return _load_prompt_file("rag_summarize", "")
+
+
+def load_report_prompts() -> str:
+    return _load_prompt_file("report_prompt", "")
+
+
+def load_supervisor_prompt() -> str:
+    return _load_prompt_file("supervisor_prompt", "你是意图路由分发器，分析用户输入并输出意图标签。")
+
+
+def load_diagnosis_prompt() -> str:
+    return _load_prompt_file("diagnosis_prompt", load_system_prompts())
+
+
+def load_data_prompt() -> str:
+    return _load_prompt_file("data_prompt", load_system_prompts())
+
+
+def load_monitor_prompt() -> str:
+    return _load_prompt_file("monitor_prompt", "")
 
 
 if __name__ == "__main__":
-    print(load_rag_prompts())
+    print("=== Supervisor ===")
+    print(load_supervisor_prompt())
+    print("\n=== Diagnosis ===")
+    print(load_diagnosis_prompt())
+    print("\n=== Data ===")
+    print(load_data_prompt())
+    print("\n=== Monitor ===")
+    print(load_monitor_prompt())

@@ -4,14 +4,26 @@
 
 # 外部提示词文件路径
 prompt_files:
-  # 岗位说明书 - AI角色定义
+  # 岗位说明书 - AI角色定义（保留兼容，多智能体模式下不再主用）
   main_prompt: "prompts/main_prompt.txt"
-  
+
   # 资料搜索员 - RAG检索指南
   rag_summarize: "prompts/rag_summarize.txt"
-  
+
   # 报告撰写员 - 报告模板
   report_prompt: "prompts/report_prompt.txt"
+
+  # Supervisor - 意图路由分发器
+  supervisor_prompt: "prompts/supervisor_prompt.txt"
+
+  # 子智能体 - 诊断Agent
+  diagnosis_prompt: "prompts/diagnosis_prompt.txt"
+
+  # 子智能体 - 数据处理Agent
+  data_prompt: "prompts/data_prompt.txt"
+
+  # 子智能体 - 实时监控Agent
+  monitor_prompt: "prompts/monitor_prompt.txt"
 
 # 系统角色定义
 roles:
