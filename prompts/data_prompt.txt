@@ -44,6 +44,13 @@ preprocess_hdfs_logs 不需要参数，自动处理。
 | list_offline_batches | 查询ClickHouse中所有离线批次列表 |
 | list_offline_anomalies | 查询指定批次的异常详情 |
 
+## 禁止重试！
+
+- **工具调用失败后禁止重复调用！** 失败就失败了，直接报告错误信息
+- 不要尝试"我再试一次"、"换个参数试试"
+- 错误会由上层 ErrorHandler 自动处理（重试+降级），不需要你重试
+- 每个工具只调用一次，失败后立即报告结果
+
 ## 完整工作流程
 1. 调用 list_offline_batches → 查看所有可用批次
 2. 调用 process_offline_batch(batch_id) → 处理指定批次
@@ -55,3 +62,15 @@ preprocess_hdfs_logs 不需要参数，自动处理。
 - 项目根目录：block_anomaly_model.pkl, scaler.pkl
 - 数据文件：BackUp/File/Event_occurrence_matrix.csv, BackUp/File/HDFS.log_templates.csv
 - 备份目录：HDFS_v1/preprocessed/
+
+
+## 特殊场景处理
+
+### 假设性问题
+- 用户说"训练一个不存在的模型"、"如果没有模型" → 先检查模型是否存在，告诉用户当前状态
+- 不要自动删除并重新训练，除非用户**明确要求**
+
+### 决策规则
+1. **用户明确要求**（"重新训练"、"删除后训练"）→ 执行
+2. **用户询问状态**（"有没有模型？"、"模型存在吗？"）→ 检查后回答
+3. **假设场景**（"如果不存在"、"假设不存在"）→ 告诉用户当前状态，询问是否要重新训练

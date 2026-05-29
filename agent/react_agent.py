@@ -15,6 +15,7 @@ from typing import Annotated, TypedDict
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
+from langgraph.types import Command
 from langchain.agents import create_agent
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
@@ -170,11 +171,8 @@ class ReactAgent:
             "error": "error_handler",
         })
 
-        # 条件边：ErrorHandler → Supervisor（重试）或 Fallback
-        builder.add_conditional_edges("error_handler", self._decide_retry, {
-            "retry":    "supervisor",
-            "fallback": "fallback",
-        })
+        # ErrorHandler 内部用 Command(goto=...) 直接跳转，此处仅兜底
+        builder.add_edge("error_handler", "fallback")
 
         # Fallback → END
         builder.add_edge("fallback", END)
@@ -186,6 +184,9 @@ class ReactAgent:
     # ============================================================
 
     def _supervisor_node(self, state: SupervisorState) -> dict:
+        next_agent = state.get("next_agent_override", "")
+        if next_agent:
+            return {"intent": next_agent, "confidence": 1.0, "next_agent_override": ""}
         # 提取最新的用户消息内容
         last_user_content = ""
         for msg in reversed(state["messages"]):
@@ -333,18 +334,14 @@ class ReactAgent:
         if not messages:
             return {"error_type": ""}
 
-        last_msg = messages[-1]
-        content = ""
-        if isinstance(last_msg, dict):
-            content = last_msg.get("content", "")
-        else:
-            content = getattr(last_msg, "content", "") or ""
-
-        content_str = str(content)
-
+        # 检查所有消息（不止最后一条），因为 LLM 可能把错误信息包装在前面的 tool 消息里
         ERROR_PATTERNS = [
-            ("模型文件不存在",    "model_not_ready"),
+            ("找不到矩阵文件",    "data_not_ready"),
             ("矩阵文件不存在",    "data_not_ready"),
+            ("找不到模型文件",    "model_not_ready"),
+            ("模型文件不存在",    "model_not_ready"),
+            ("训练失败",          "model_not_ready"),
+            ("模型缺失",          "model_not_ready"),
             ("文件缺失",          "data_not_ready"),
             ("组件不全",          "data_not_ready"),
             ("Connection refused", "connection_failed"),
@@ -354,10 +351,19 @@ class ReactAgent:
             ("FileNotFoundError", "file_missing"),
         ]
 
-        for pattern, err_type in ERROR_PATTERNS:
-            if pattern.lower() in content_str.lower():
-                logger.warning(f"[Validator] 检测到错误 → {err_type}")
-                return {"error_type": err_type}
+        # 从后往前扫最近 10 条消息，避免漏掉
+        for msg in reversed(messages[-10:]):
+            content = ""
+            if isinstance(msg, dict):
+                content = msg.get("content", "")
+            else:
+                content = getattr(msg, "content", "") or ""
+            content_str = str(content)
+
+            for pattern, err_type in ERROR_PATTERNS:
+                if pattern.lower() in content_str.lower():
+                    logger.warning(f"[Validator] 检测到错误 → {err_type}  (匹配: {pattern})")
+                    return {"error_type": err_type}
 
         return {"error_type": ""}
 
@@ -370,31 +376,27 @@ class ReactAgent:
     # ============================================================
 
     @staticmethod
-    def _handle_error(state: SupervisorState) -> dict:
+    def _handle_error(state: SupervisorState):
         retry = state.get("retry_count", 0) + 1
         error_type = state.get("error_type", "unknown")
         logger.warning(f"[ErrorHandler] 第 {retry} 次重试  错误类型={error_type}")
 
-        # 数据/模型缺失 → 强制路由到 Data Agent
         reroute_map = {
             "model_not_ready":   "data_agent",
             "data_not_ready":    "data_agent",
             "file_missing":      "data_agent",
         }
-        next_agent = reroute_map.get(error_type, "")
+        target = reroute_map.get(error_type, "fallback")
 
-        return {
-            "retry_count":          retry,
-            "error_type":           "",
-            "next_agent_override":  next_agent,
-        }
+        if retry >= 3:
+            logger.warning("[ErrorHandler] 已达最大重试次数 -> fallback")
+            return Command(goto="fallback", update={"retry_count": retry})
 
-    @staticmethod
-    def _decide_retry(state: SupervisorState) -> str:
-        if state.get("retry_count", 0) >= 3:
-            logger.warning("[ErrorHandler] 已达最大重试次数 → fallback")
-            return "fallback"
-        return "retry"
+        logger.info(f"[ErrorHandler] 直接跳转 -> {target} (绕过 Supervisor)")
+        return Command(goto=target, update={
+            "retry_count": retry,
+            "error_type": "",
+        })
 
     # ============================================================
     # Fallback
