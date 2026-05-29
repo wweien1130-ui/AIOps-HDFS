@@ -5,8 +5,8 @@
 import os
 import sys
 
-SOURCE_FILE = r"E:\private_project\AI_application\HDFS_v1\HDFS.log"
-OUTPUT_DIR = r"E:\private_project\AI_application\HDFS_Test"
+SOURCE_FILE = r"E:\private_project\AI_application\HDFS_Test"
+OUTPUT_DIR = r"E:\private_project\AI_application\HDFS_Test\processed"
 LINES_PER_FILE = 1000000  # 每100万行一个文件
 
 def split_file():

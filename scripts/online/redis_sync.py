@@ -27,22 +27,35 @@ r = redis.Redis(
     decode_responses=True
 )
 
+
+print(f"✅ Redis: {redis_config['host']}:{redis_config['port']}")
+print(f"✅ ClickHouse: {ch_config['host']}:{ch_config.get('http_port', 8123)}")
+
+
 key_prefix = redis_config.get('key_prefix', 'anomaly:')
 last_sync = r.get(key_prefix + redis_config['keys']['sync_time'])
 if last_sync is None:
     last_sync = '1970-01-01 00:00:00'
 
 while True:
+    print("🔄 查询 anomaly_blocks...")
+    print(f"   last_sync = {last_sync}")
     query = f"""
     SELECT 
-        block_id, E1, E2, E3, E4, E5, E6, E7, E8, E9, E10,
-        E11, E12, E13, E14, E15, E16, E17, E18, E19, E20,
-        E21, E22, E23, E24, E25, E26, E27, E28, E29,
-        anomaly_score, max(detected_at) as detected_at
-    FROM online.anomaly_blocks
-    WHERE block_id IN (
-        SELECT block_id FROM online.anomaly_blocks WHERE detected_at > '{last_sync}'
-    )    GROUP BY block_id
+    block_id, 
+    any(E1) AS E1, any(E2) AS E2, any(E3) AS E3, any(E4) AS E4, any(E5) AS E5, 
+    any(E6) AS E6, any(E7) AS E7, any(E8) AS E8, any(E9) AS E9, any(E10) AS E10,
+    any(E11) AS E11, any(E12) AS E12, any(E13) AS E13, any(E14) AS E14, any(E15) AS E15, 
+    any(E16) AS E16, any(E17) AS E17, any(E18) AS E18, any(E19) AS E19, any(E20) AS E20,
+    any(E21) AS E21, any(E22) AS E22, any(E23) AS E23, any(E24) AS E24, any(E25) AS E25, 
+    any(E26) AS E26, any(E27) AS E27, any(E28) AS E28, any(E29) AS E29,
+    max(anomaly_score) AS anomaly_score, 
+    max(detected_at) AS detected_at
+FROM online.anomaly_blocks
+WHERE block_id IN (
+    SELECT block_id FROM online.anomaly_blocks WHERE detected_at > '{last_sync}'
+)
+GROUP BY block_id
     """
     df = client.query_df(query)
     if not df.empty:

@@ -26,10 +26,10 @@ from agent.tools.agent_tools import (
     get_realtime_anomalies, start_realtime_service, stop_realtime_service,
 )
 from utils.prompt_loader import (
-    load_system_prompts,
-    load_supervisor_prompt,
-    load_diagnosis_prompt,
-    load_data_prompt,
+    load_system_prompts,    #系统提示词
+    load_supervisor_prompt,  #调度器
+    load_diagnosis_prompt,   #诊断器
+    load_data_prompt,         #数据处理器
 )
 from utils.logger_handler import logger
 
@@ -40,12 +40,12 @@ from utils.logger_handler import logger
 
 class SupervisorState(TypedDict):
     """多智能体 Supervisor 图的全局状态。"""
-    messages:             Annotated[list, add_messages]
-    intent:               str
-    confidence:           float
-    retry_count:          int
-    error_type:           str
-    next_agent_override:  str
+    messages:             Annotated[list, add_messages]  #消息列表
+    intent:               str    #意图
+    confidence:           float  #置信度
+    retry_count:          int    #重试次数
+    error_type:           str    #错误类型
+    next_agent_override:  str    #下一个智能体覆盖
 
 
 # ============================================================
@@ -67,18 +67,36 @@ class ReactAgent:
         self.diagnosis_agent = create_agent(
             model=chat_models,
             system_prompt=diagnosis_prompt or fallback_prompt,
-            tools=[rag_retrieve, detect_anomaly, check_model_readiness,
-                   list_offline_anomalies,
-                   preprocess_hdfs_logs, train_mlp_model],
-        )
-
+            tools=[
+                # 离线批次相关（补充完整）
+                list_offline_batches,
+                list_offline_anomalies,
+                process_offline_batch,
+                # 核心检测
+                detect_anomaly,
+                # 知识检索
+                rag_retrieve,
+                # 预处理/训练/状态检查
+                preprocess_hdfs_logs,
+                train_mlp_model,
+                check_model_readiness,
+    ],
+)
         logger.info("[ReactAgent] 构建 Data 子Agent...")
         self.data_agent = create_agent(
             model=chat_models,
             system_prompt=data_prompt or fallback_prompt,
-            tools=[preprocess_hdfs_logs, train_mlp_model,
-                   process_offline_batch, list_offline_batches],
-        )
+            tools=[
+                # 数据处理
+                preprocess_hdfs_logs,
+                train_mlp_model,
+                # 批次管理
+                process_offline_batch,
+                list_offline_batches,
+                # 异常查询（补充）
+                list_offline_anomalies,
+    ],
+)
 
         logger.info("[ReactAgent] 构建 Monitor 子Agent（纯Python，零LLM延迟）...")
         # MonitorAgent 不需要 LLM — 直接根据关键词执行工具，避免 LLM 调用卡住聊天
@@ -91,7 +109,19 @@ class ReactAgent:
         logger.info("[ReactAgent] 构建 General 子Agent...")
         self.general_agent = create_agent(
             model=chat_models,
-            system_prompt="你是一个通用助手。",
+            system_prompt="""你是一个专业的HDFS智能助手的中枢调度员。
+
+                            你的职责：
+                            1. 回答关于时间、数学计算等通用问题
+                            2. 当用户询问你的身份时，回答：
+                            "我是HDFS智能诊断系统，集成了异常检测、知识检索、实时监控等功能。
+                                如果需要检测异常或查询知识，请直接告诉我您的需求。"
+                            3. 如果用户的问题涉及HDFS，主动引导到对应功能
+
+                            可用工具：
+                            - get_current_time: 获取当前时间
+                            - calculate: 数学计算
+                            """,
             tools=[get_current_time, calculate],
         )
 
@@ -283,12 +313,11 @@ class ReactAgent:
 
         logger.info(f"[MonitorAgent] 直接执行: {last_content[:60]}...")
 
-        if any(kw in last_content for kw in ["开启", "启动", "在线模式", "在线监测", "实时监控"]):
-            result_str = self._monitor_tools["start"].invoke({})
-        elif any(kw in last_content for kw in ["关闭", "停止"]):
+        if any(kw in last_content for kw in ["关闭", "停止"]):
             result_str = self._monitor_tools["stop"].invoke({})
+        elif any(kw in last_content for kw in ["开启", "启动", "在线模式", "在线监测", "实时监控"]):
+            result_str = self._monitor_tools["start"].invoke({})
         else:
-            # 默认为查询
             result_str = self._monitor_tools["query"].invoke({"limit": 10})
 
         logger.info(f"[MonitorAgent] 完成，结果长度={len(str(result_str))}")

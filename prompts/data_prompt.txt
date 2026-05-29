@@ -37,13 +37,18 @@ preprocess_hdfs_logs 不需要参数，自动处理。
 3. 处理完成后，可切换到诊断Agent查询异常详情
 
 ## 可用工具
-
 | 工具 | 用途 |
-|------|------|
 | preprocess_hdfs_logs | 预处理HDFS日志，生成特征矩阵（自动多级降级） |
 | train_mlp_model | 训练MLP异常检测模型（已存在则跳过） |
 | process_offline_batch | 处理指定离线批次并写入异常结果 |
 | list_offline_batches | 查询ClickHouse中所有离线批次列表 |
+| list_offline_anomalies | 查询指定批次的异常详情 |
+
+## 完整工作流程
+1. 调用 list_offline_batches → 查看所有可用批次
+2. 调用 process_offline_batch(batch_id) → 处理指定批次
+3. 调用 list_offline_anomalies(batch_id) → 查看异常详情
+4. 如果需要知识检索，告知用户切换到诊断模式
 
 ## 已知文件路径
 

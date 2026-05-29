@@ -456,6 +456,8 @@ def start_realtime_service() -> str:
     import subprocess
     import os
     import sys
+    import time
+    import psutil
 
     scripts_dir = get_abs_path("scripts/online")
     hdfs_test_dir = get_abs_path("HDFS_Test")
@@ -472,54 +474,99 @@ def start_realtime_service() -> str:
     if not os.path.exists(split_log_script):
         return f"❌ 找不到切分脚本: {split_log_script}"
 
+    def is_script_running(script_name: str) -> list:
+        """检查同名脚本是否已经在运行，返回运行中的进程列表"""
+        running = []
+        current_pid = os.getpid()
+        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+            try:
+                if proc.info['pid'] == current_pid:
+                    continue
+                cmdline = proc.info.get('cmdline') or []
+                cmdline_str = ' '.join(cmdline).lower()
+                if script_name.lower() in cmdline_str and 'python' in cmdline_str:
+                    running.append(proc.info['pid'])
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+        return running
+
     try:
         import logging
         logging.basicConfig(level=logging.INFO)
 
-        proc1 = subprocess.Popen(
-            [sys.executable, predictor_script],
-            cwd=scripts_dir,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
-        )
-        logging.info(f"启动predictor: pid={proc1.pid}")
+        running_pids = []
+        new_started = []
 
-        proc2 = subprocess.Popen(
-            [sys.executable, redis_sync_script],
-            cwd=scripts_dir,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
-        )
-        logging.info(f"启动redis_sync: pid={proc2.pid}")
+        # 检查并启动 predictor.py
+        running = is_script_running("predictor.py")
+        if running:
+            running_pids.append(f"predictor.py (已有 pid={running[0]})")
+        else:
+            proc1 = subprocess.Popen(
+                [sys.executable, predictor_script],
+                cwd=scripts_dir,
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
+            )
+            time.sleep(0.5)
+            if proc1.poll() is not None:
+                return f"❌ predictor.py 启动后立即退出"
+            new_started.append(f"predictor.py (pid={proc1.pid})")
+            logging.info(f"启动predictor: pid={proc1.pid}")
 
-        proc3 = subprocess.Popen(
-            [sys.executable, watch_folder_script],
-            cwd=scripts_dir,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
-        )
-        logging.info(f"启动watch_folder: pid={proc3.pid}")
+        # 检查并启动 redis_sync.py
+        running = is_script_running("redis_sync.py")
+        if running:
+            running_pids.append(f"redis_sync.py (已有 pid={running[0]})")
+        else:
+            proc2 = subprocess.Popen(
+                [sys.executable, redis_sync_script],
+                cwd=scripts_dir,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+            time.sleep(0.5)
+            if proc2.poll() is not None:
+                _, stderr = proc2.communicate()
+                return f"❌ redis_sync.py 启动失败:\n{stderr.decode()}"
+            new_started.append(f"redis_sync.py (pid={proc2.pid})")
+            logging.info(f"启动redis_sync: pid={proc2.pid}")
 
-        # 第2步：等监控就绪后再切分日志（模拟实时上传到 HDFS_Test/）
-        proc4 = subprocess.Popen(
-            [sys.executable, split_log_script],
-            cwd=hdfs_test_dir,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
-        )
-        logging.info(f"启动split_log: pid={proc4.pid}")
+        # 检查并启动 watch_folder.py
+        running = is_script_running("watch_folder.py")
+        if running:
+            running_pids.append(f"watch_folder.py (已有 pid={running[0]})")
+        else:
+            proc3 = subprocess.Popen(
+                [sys.executable, watch_folder_script],
+                cwd=scripts_dir,
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
+            )
+            new_started.append(f"watch_folder.py (pid={proc3.pid})")
+            logging.info(f"启动watch_folder: pid={proc3.pid}")
 
-        return f"""✅ 实时监控服务已启动！（先启动监控 → 再切分日志）
+        # 检查并启动 split_log.py
+        running = is_script_running("split_log.py")
+        if running:
+            running_pids.append(f"split_log.py (已有 pid={running[0]})")
+        else:
+            proc4 = subprocess.Popen(
+                [sys.executable, split_log_script],
+                cwd=hdfs_test_dir,
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
+            )
+            new_started.append(f"split_log.py (pid={proc4.pid})")
+            logging.info(f"启动split_log: pid={proc4.pid}")
 
-1. predictor.py (pid={proc1.pid}) - 定时检测异常，写入 anomaly_blocks
-2. redis_sync.py (pid={proc2.pid}) - 同步异常到Redis
-3. watch_folder.py (pid={proc3.pid}) - 监控 HDFS_Test/ 自动读取 .log
-4. split_log.py (pid={proc4.pid}) - 正在切分 HDFS.log → HDFS_Test/（模拟实时上传）
+        status_parts = []
+        if running_pids:
+            status_parts.append(f"⏭️  已运行中（共{len(running_pids)}个）：\n  " + "\n  ".join(running_pids))
+        if new_started:
+            status_parts.append(f"✅ 新启动（共{len(new_started)}个）：\n  " + "\n  ".join(new_started))
 
-监控文件夹: {hdfs_test_dir}
+        return f"""✅ 实时监控服务状态：
 
-切分完成后 watch_folder 会自动检测到新文件并发送到 Kafka。
-可随时查询实时异常数据。"""
+{chr(10).join(status_parts)}
+
+监控文件夹: {hdfs_test_dir}"""
     except Exception as e:
         return f"❌ 启动失败: {str(e)}"
 

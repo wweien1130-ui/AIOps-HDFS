@@ -14,8 +14,8 @@ vector_store:
   collection_name: "hdfs_knowledge"
 
   #聊天模型
-  chat_model : "qwen-turbo"
-  # chat_model : "MiniMax-M2.5"
+  # chat_model : "qwen-turbo"
+  chat_model : "qwen3.7-max"
 
   # 嵌入模型
   embedding:
