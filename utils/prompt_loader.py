@@ -52,6 +52,10 @@ def load_monitor_prompt() -> str:
     return _load_prompt_file("monitor_prompt", "")
 
 
+def load_ops_prompt() -> str:
+    return _load_prompt_file("ops_prompt", load_system_prompts())
+
+
 if __name__ == "__main__":
     print("=== Supervisor ===")
     print(load_supervisor_prompt())

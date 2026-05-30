@@ -25,6 +25,9 @@ prompt_files:
   # 子智能体 - 实时监控Agent
   monitor_prompt: "prompts/monitor_prompt.txt"
 
+  # 子智能体 - 运维Agent
+  ops_prompt: "prompts/ops_prompt.txt"
+
 # 系统角色定义
 roles:
   sre_expert:

@@ -1,0 +1,251 @@
+[33mcommit 5a22c4d622fb572997f5c2523a2961a32b621d99[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31mgithub/main[m[33m, [m[1;31mgithub/HEAD[m[33m)[m
+Author: LIANG <m15260655179@163.com>
+Date:   Fri May 29 23:52:19 2026 +0800
+
+    fix retry&fallback error
+
+[33mcommit 5a727a141dd6b789bbba3bc587bc507319ac5b91[m
+Author: LIANG <m15260655179@163.com>
+Date:   Fri May 29 20:21:36 2026 +0800
+
+    5.229
+
+[33mcommit 18db569e85cca5e5aa4f50a81a08eae5691f2cf9[m
+Author: LIANG <m15260655179@163.com>
+Date:   Thu May 28 19:54:05 2026 +0800
+
+    5.28
+
+[33mcommit 6308007a9a30e56640e773f5b21ac8995341ccd9[m
+Author: LIANG <m15260655179@163.com>
+Date:   Sun May 24 23:14:42 2026 +0800
+
+    5.24 pm
+
+[33mcommit d5e52b93bf2002dd684256d39021dee304dba1a7[m[33m ([m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m
+Author: LIANG <m15260655179@163.com>
+Date:   Sun May 24 14:59:09 2026 +0800
+
+    5.24
+
+[33mcommit eebc3328bd111d31aacc442c8030129fb56df4b7[m
+Author: LIANG <m15260655179@163.com>
+Date:   Fri May 8 20:52:55 2026 +0800
+
+    成功自动更新前端predictor.py
+
+[33mcommit a504e3061a7fe8b1c65e41f1d092107bf0afa39f[m
+Author: LIANG <m15260655179@163.com>
+Date:   Fri May 8 20:02:03 2026 +0800
+
+    暂存
+
+[33mcommit b6062fdf171dc58e0c3f353778254c9425decb21[m
+Author: LIANG <m15260655179@163.com>
+Date:   Fri May 8 19:12:16 2026 +0800
+
+    5.8
+
+[33mcommit 811f9b78472414c26265776aa3600be6f3306130[m
+Author: LIANG <m15260655179@163.com>
+Date:   Tue Apr 21 12:24:32 2026 +0800
+
+    change Block display
+
+[33mcommit 9a8e6bd845ef6919b8c6a41709824431294eb050[m
+Author: LIANG <m15260655179@163.com>
+Date:   Tue Apr 21 12:02:47 2026 +0800
+
+    暂存
+
+[33mcommit c7b7466e08e8f5e3bc3e2db559a1b9a7146aaf56[m
+Author: LIANG <m15260655179@163.com>
+Date:   Tue Apr 21 10:56:36 2026 +0800
+
+    Success Fix Insert Redis
+
+[33mcommit fc3f212718a681f441fabf46e43e6717b75582d5[m
+Author: LIANG <m15260655179@163.com>
+Date:   Mon Apr 20 23:26:43 2026 +0800
+
+    fail start redis_sync
+
+[33mcommit b65d4b38d2c5133e45215700f78a88f1e356cdea[m
+Author: LIANG <m15260655179@163.com>
+Date:   Mon Apr 20 23:00:16 2026 +0800
+
+    success insert redis
+
+[33mcommit 0cf3346afe0efc37bb59e0e5dfe653c417077de6[m
+Author: LIANG <m15260655179@163.com>
+Date:   Mon Apr 20 22:08:52 2026 +0800
+
+    offline error
+
+[33mcommit 9454352cf8a1367b761012c5433555f8232af5ba[m
+Author: LIANG <m15260655179@163.com>
+Date:   Mon Apr 20 19:23:04 2026 +0800
+
+    ready start online
+
+[33mcommit 5280df61a577ad446154fa1ac0e462460f39e15e[m
+Author: LIANG <m15260655179@163.com>
+Date:   Sun Apr 19 23:47:36 2026 +0800
+
+    Success Offline analysis
+
+[33mcommit 15a6ea8b6f732556d42fdfe2bb090326044f1425[m
+Author: LIANG <m15260655179@163.com>
+Date:   Sun Apr 19 13:24:17 2026 +0800
+
+    ready transform File Path
+
+[33mcommit d5dddf938c962510520e07de36da0950f5ffaeee[m
+Author: LIANG <m15260655179@163.com>
+Date:   Sun Apr 19 12:36:03 2026 +0800
+
+    E事件修复
+
+[33mcommit 3c419a67873310c6d9fe3ff2240aa95bcb5b22bf[m
+Author: LIANG <m15260655179@163.com>
+Date:   Sun Apr 19 12:28:57 2026 +0800
+
+    E事件显示异常
+
+[33mcommit 541e28fa44a1aa6c9edc0276afb7ced655422ce7[m
+Author: LIANG <m15260655179@163.com>
+Date:   Sat Apr 18 18:00:32 2026 +0800
+
+    start The next
+
+[33mcommit caa034a912be934ab4e3a7d68c202249cd5c8eb1[m
+Author: LIANG <m15260655179@163.com>
+Date:   Sat Apr 18 17:52:05 2026 +0800
+
+    path && prompt update success
+
+[33mcommit d0d86048b9a4e90dc5596fc077833d18958498e8[m
+Author: LIANG <m15260655179@163.com>
+Date:   Sat Apr 18 15:40:12 2026 +0800
+
+    持久化start
+
+[33mcommit f990599e8e1de5c7027e9f33d7dee1cb5ddcd970[m
+Author: LIANG <m15260655179@163.com>
+Date:   Fri Apr 17 21:10:27 2026 +0800
+
+    da_prep文件路径须统一 &&主提示词需更新
+
+[33mcommit 64500c8a6a5f62d4e393c291cf142a97f2fe1076[m
+Author: LIANG <m15260655179@163.com>
+Date:   Thu Apr 16 23:29:46 2026 +0800
+
+    Online && Offline
+
+[33mcommit b750ac8c0b6baf91122a92ef9247d90f0c247cdc[m
+Author: LIANG <m15260655179@163.com>
+Date:   Thu Apr 16 20:58:38 2026 +0800
+
+    成功实现预测结果对比，具体比较结果参考mlp预测.md
+
+[33mcommit 40e26257c20c1e4cb6b91dc051c32674e29463b2[m
+Author: LIANG <m15260655179@163.com>
+Date:   Thu Apr 16 12:21:01 2026 +0800
+
+    数据不同步
+
+[33mcommit 1052385e33bdd423d5db5b9cb270843565d62989[m
+Author: LIANG <m15260655179@163.com>
+Date:   Wed Apr 15 15:27:41 2026 +0800
+
+    将初始数据的筛选和分析交给clickhouse，可更快给出对应的template内容（不包含lable,需要mlp进一步分析）
+
+[33mcommit 9d574d631514a6c4ba5da4b42d8b27149f345640[m
+Author: LIANG <m15260655179@163.com>
+Date:   Wed Apr 15 11:20:08 2026 +0800
+
+    producer lack Screening
+
+[33mcommit 82a35e2611fec993db9e8a1cf797c08bdc486ef9[m
+Author: LIANG <m15260655179@163.com>
+Date:   Tue Apr 14 20:13:10 2026 +0800
+
+    正则化匹配异常块
+
+[33mcommit 91e58d8ff56aecd92f081637d7985b5991bd2d7b[m
+Author: LIANG <m15260655179@163.com>
+Date:   Tue Apr 14 17:20:55 2026 +0800
+
+    实现c_p的kafka传输数据
+
+[33mcommit 14cd33f4a680e81579f2b3e1c22ac847401ee70e[m
+Author: LIANG <m15260655179@163.com>
+Date:   Sun Apr 12 00:30:06 2026 +0800
+
+    前端初始化
+
+[33mcommit 6ec932f3072cd42d9c6c7bb6939088b4402c54e4[m
+Author: LIANG <m15260655179@163.com>
+Date:   Sun Apr 12 00:29:01 2026 +0800
+
+    前端初始化
+
+[33mcommit e9052cbd9a41f1024c046068d356081ec41f7de4[m
+Author: LIANG <m15260655179@163.com>
+Date:   Wed Apr 8 23:31:56 2026 +0800
+
+    add md
+
+[33mcommit a6ac796b26e5e34be7615885ec3f52401b79a56a[m
+Author: LIANG <m15260655179@163.com>
+Date:   Tue Apr 7 18:29:31 2026 +0800
+
+    agent down!
+
+[33mcommit 43e95cd7f9e5a3d16268a21b1c619af901b5cb29[m
+Author: LIANG <m15260655179@163.com>
+Date:   Tue Apr 7 18:07:44 2026 +0800
+
+    gemini 4.7
+
+[33mcommit 3bcd286d88f875dd5414e683cdc6e0d6cfe057a0[m
+Author: LIANG <m15260655179@163.com>
+Date:   Tue Apr 7 16:53:37 2026 +0800
+
+    异常检测故障
+
+[33mcommit 6273ff4a16f246d2de77fd07501693884564ccde[m
+Author: LIANG <m15260655179@163.com>
+Date:   Tue Apr 7 12:34:44 2026 +0800
+
+    agent_system
+
+[33mcommit 431249dcfbc9d2a38b14693674a4c90f3fc91483[m
+Author: LIANG <m15260655179@163.com>
+Date:   Mon Apr 6 21:43:34 2026 +0800
+
+    agent down1
+
+[33mcommit 90410b7389a064c97d29fabc3b7e334b21d03234[m
+Author: LIANG <m15260655179@163.com>
+Date:   Mon Apr 6 20:29:58 2026 +0800
+
+    agent_down_first
+
+[33mcommit f5ed8e105014b33b63a49e9aa5d403c5fbbbec43[m
+Author: LIANG <m15260655179@163.com>
+Date:   Mon Apr 6 20:05:27 2026 +0800
+
+    knowledge down
+
+[33mcommit 5dcee70125eef3f2f978ed9144f4cc83ab626b72[m
+Author: LIANG <m15260655179@163.com>
+Date:   Mon Apr 6 17:28:50 2026 +0800
+
+    middleware down
+
+[33mcommit 8d575c228907da707b12eacfc3bdacd8e8fcb78a[m
+Author: LIANG <m15260655179@163.com>
+Date:   Mon Apr 6 13:37:29 2026 +0800
+
+    first day_mlp

@@ -25,12 +25,16 @@ from agent.tools.agent_tools import (
     preprocess_hdfs_logs, train_mlp_model, detect_anomaly, check_model_readiness,
     list_offline_batches, list_offline_anomalies, process_offline_batch,
     get_realtime_anomalies, start_realtime_service, stop_realtime_service,
+    # 运维工具
+    check_system_status, view_system_config, cleanup_redis_data,
+    check_service_status, restart_service, delete_offline_batch,
 )
 from utils.prompt_loader import (
     load_system_prompts,    #系统提示词
     load_supervisor_prompt,  #调度器
     load_diagnosis_prompt,   #诊断器
-    load_data_prompt,         #数据处理器
+    load_data_prompt,        #数据处理器
+    load_ops_prompt,         #运维处理器
 )
 from utils.logger_handler import logger
 
@@ -47,6 +51,8 @@ class SupervisorState(TypedDict):
     retry_count:          int    #重试次数
     error_type:           str    #错误类型
     next_agent_override:  str    #下一个智能体覆盖
+    pending_operation:    str    #待确认的操作
+    pending_params:       dict   #待确认的操作参数
 
 
 # ============================================================
@@ -58,9 +64,17 @@ class ReactAgent:
     def __init__(self):
         logger.info("[ReactAgent] 初始化多智能体 Supervisor 系统...")
 
+        # 存储对话状态
+        self.conversation_state = {
+            "messages": [],
+            "pending_operation": "",
+            "pending_params": {}
+        }
+
         # --- 加载提示词 ---
         diagnosis_prompt = load_diagnosis_prompt()
         data_prompt = load_data_prompt()
+        ops_prompt = load_ops_prompt()
         fallback_prompt = load_system_prompts()
 
         # --- 构建四个子智能体 ---
@@ -126,6 +140,28 @@ class ReactAgent:
             tools=[get_current_time, calculate],
         )
 
+        logger.info("[ReactAgent] 构建 Ops 子Agent...")
+        self.ops_agent = create_agent(
+            model=chat_models,
+            system_prompt=ops_prompt or fallback_prompt,
+            tools=[
+                # 系统状态检查
+                check_system_status,
+                # 配置查看（需要确认）
+                view_system_config,
+                # 数据清理（需要确认）
+                cleanup_redis_data,
+                # 服务管理（需要确认）
+                check_service_status,
+                restart_service,
+                # 数据删除（需要确认）
+                delete_offline_batch,
+            ],
+        )
+
+        # 存储待确认的操作
+        self.pending_ops = {}
+
         # --- 构建 Supervisor 图 ---
         logger.info("[ReactAgent] 构建 Supervisor 状态图...")
         self.graph = self._build_graph()
@@ -145,6 +181,7 @@ class ReactAgent:
         builder.add_node("data_agent",       self._make_agent_node(self.data_agent, "Data"))
         builder.add_node("monitor_agent",    self._monitor_node)
         builder.add_node("general_agent",    self._make_agent_node(self.general_agent, "General"))
+        builder.add_node("ops_agent",        self._ops_agent_node)
         builder.add_node("result_validator", self._validate_result)
         builder.add_node("error_handler",    self._handle_error)
         builder.add_node("fallback",         self._fallback_node)
@@ -158,11 +195,12 @@ class ReactAgent:
             "data_agent":      "data_agent",
             "monitor_agent":   "monitor_agent",
             "general_agent":   "general_agent",
+            "ops_agent":       "ops_agent",
             "fallback":        "fallback",
         })
 
         # 所有子Agent → Validator
-        for name in ["diagnosis_agent", "data_agent", "monitor_agent", "general_agent"]:
+        for name in ["diagnosis_agent", "data_agent", "monitor_agent", "general_agent", "ops_agent"]:
             builder.add_edge(name, "result_validator")
 
         # 条件边：Validator → END 或 ErrorHandler
@@ -187,6 +225,7 @@ class ReactAgent:
         next_agent = state.get("next_agent_override", "")
         if next_agent:
             return {"intent": next_agent, "confidence": 1.0, "next_agent_override": ""}
+
         # 提取最新的用户消息内容
         last_user_content = ""
         for msg in reversed(state["messages"]):
@@ -199,6 +238,50 @@ class ReactAgent:
         if not last_user_content:
             logger.warning("[Supervisor] 未找到用户消息，回退到 general")
             return {"intent": "general", "confidence": 0.5, "next_agent_override": ""}
+
+        # 检查用户消息是否是确认词
+        is_confirm = last_user_content.strip().lower() in ["confirm", "确认", "是", "yes", "y"]
+
+        # 检查是否有待确认的操作（从历史消息中查找）
+        pending_operation = state.get("pending_operation", "")
+        if not pending_operation:
+            # 从历史消息中查找是否有待确认的操作提示
+            logger.info(f"[Supervisor] 检查历史消息，共 {len(state['messages'])} 条")
+            for i, msg in enumerate(reversed(state["messages"])):
+                # 检查消息类型
+                if isinstance(msg, dict):
+                    role = msg.get("role", "")
+                    content = msg.get("content", "")
+                else:
+                    role = getattr(msg, "type", "")
+                    content = getattr(msg, "content", "")
+
+                logger.info(f"[Supervisor] 检查消息 {i}: role={role}, content={content[:50]}...")
+
+                if role == "ai" or role == "assistant":
+                    if "确认" in content or "confirm" in content.lower():
+                        logger.info(f"[Supervisor] 找到确认消息: {content[:50]}...")
+                        # 提取操作类型
+                        if "配置" in content:
+                            pending_operation = "view_config"
+                        elif "清理" in content or "Redis" in content:
+                            pending_operation = "cleanup_data"
+                        elif "服务状态" in content or "服务" in content:
+                            pending_operation = "check_service"
+                        elif "重启" in content:
+                            pending_operation = "restart_service"
+                        elif "删除" in content:
+                            pending_operation = "delete_batch"
+                        break
+
+        if is_confirm and pending_operation:
+            logger.info(f"[Supervisor] 用户确认操作: {pending_operation}")
+            return {"intent": "ops", "confidence": 1.0, "next_agent_override": "ops_agent"}
+
+        # 如果是确认词但没有待确认操作，当作通用问题处理
+        if is_confirm:
+            logger.info(f"[Supervisor] 确认词但无待确认操作，当作通用问题")
+            return {"intent": "general", "confidence": 0.8, "next_agent_override": ""}
 
         logger.info(f"[Supervisor] 分析意图: {last_user_content[:60]}...")
 
@@ -236,6 +319,7 @@ class ReactAgent:
             "DATA":      "data",
             "MONITOR":   "monitor",
             "GENERAL":   "general",
+            "OPS":       "ops",
         }
         intent = intent_map.get(raw, "")
         if intent:
@@ -249,6 +333,8 @@ class ReactAgent:
             return "data", 0.6
         if any(kw in t for kw in ["monitor", "监控", "实时", "在线", "启动服务", "停止服务"]):
             return "monitor", 0.6
+        if any(kw in t for kw in ["运维", "系统状态", "配置", "清理", "重启服务", "检查状态", "服务管理"]):
+            return "ops", 0.6
         return "general", 0.5
 
     # ============================================================
@@ -268,6 +354,7 @@ class ReactAgent:
             "data":      "data_agent",
             "monitor":   "monitor_agent",
             "general":   "general_agent",
+            "ops":       "ops_agent",
         }
         target = route_map.get(intent, "fallback")
         logger.info(f"[Router] {intent} → {target}")
@@ -323,6 +410,125 @@ class ReactAgent:
 
         logger.info(f"[MonitorAgent] 完成，结果长度={len(str(result_str))}")
         return {"messages": [AIMessage(content=str(result_str))]}
+
+    # ============================================================
+    # OpsAgent 节点 —— 运维操作，支持二次确认
+    # ============================================================
+
+    def _ops_agent_node(self, state: SupervisorState) -> dict:
+        """处理运维操作，支持二次确认机制"""
+        # 获取最新的用户消息
+        last_content = ""
+        for msg in reversed(state["messages"]):
+            role = msg.get("role", "") if isinstance(msg, dict) else getattr(msg, "type", "")
+            if role in ("user", "human"):
+                content = msg.get("content", "") if isinstance(msg, dict) else getattr(msg, "content", "")
+                last_content = content
+                break
+
+        logger.info(f"[OpsAgent] 处理请求: {last_content[:60]}...")
+
+        # 检查是否有待确认的操作
+        pending_operation = state.get("pending_operation", "")
+
+        # 如果用户输入的是确认词，且有待确认的操作
+        is_confirm = last_content.strip().lower() in ["confirm", "确认", "是", "yes", "y"]
+        if is_confirm and pending_operation:
+            logger.info(f"[OpsAgent] 执行待确认操作: {pending_operation}")
+
+            # 执行待确认的操作 - 需要修改消息内容为实际的操作命令
+            # 创建新的消息列表，将确认词替换为实际的操作
+            messages = state["messages"].copy()
+            # 找到用户的消息并替换内容
+            for i in range(len(messages) - 1, -1, -1):
+                msg = messages[i]
+                role = msg.get("role", "") if isinstance(msg, dict) else getattr(msg, "type", "")
+                if role in ("user", "human"):
+                    # 根据操作类型生成相应的命令
+                    if pending_operation == "view_config":
+                        new_content = "查看系统配置 confirm=True"
+                    elif pending_operation == "cleanup_data":
+                        new_content = "清理Redis数据 confirm=True"
+                    elif pending_operation == "check_service":
+                        new_content = "查看服务状态 confirm=True"
+                    elif pending_operation == "restart_service":
+                        new_content = "重启预测服务 confirm=True"
+                    elif pending_operation == "delete_batch":
+                        new_content = "删除批次 confirm=True"
+                    else:
+                        new_content = last_content + " confirm=True"
+
+                    if isinstance(msg, dict):
+                        messages[i] = {"role": role, "content": new_content}
+                    else:
+                        msg.content = new_content
+                    break
+
+            try:
+                result = self.ops_agent.invoke({"messages": messages})
+                existing_count = len(messages)
+                all_msgs = result.get("messages", [])
+                new_msgs = all_msgs[existing_count:]
+
+                # 清除待确认状态
+                return {
+                    "messages": new_msgs,
+                    "pending_operation": "",
+                    "pending_params": {}
+                }
+            except Exception as e:
+                logger.error(f"[OpsAgent] 执行失败: {e}")
+                return {
+                    "messages": [AIMessage(content=f"操作执行失败: {str(e)}")],
+                    "pending_operation": "",
+                    "pending_params": {}
+                }
+
+        # 正常处理运维请求
+        try:
+            result = self.ops_agent.invoke({"messages": state["messages"]})
+            existing_count = len(state["messages"])
+            all_msgs = result.get("messages", [])
+            new_msgs = all_msgs[existing_count:]
+
+            # 检查是否需要记录待确认的操作
+            # 通过分析最后一条AI消息来判断
+            if new_msgs:
+                last_ai_msg = new_msgs[-1]
+                msg_content = getattr(last_ai_msg, "content", "") if hasattr(last_ai_msg, "content") else str(last_ai_msg)
+
+                # 如果消息中包含"确认"关键词，说明需要确认
+                if "确认" in msg_content or "confirm" in msg_content.lower():
+                    # 从用户消息中提取操作类型
+                    operation = self._extract_operation_type(last_content)
+                    logger.info(f"[OpsAgent] 记录待确认操作: {operation}")
+                    return {
+                        "messages": new_msgs,
+                        "pending_operation": operation,
+                        "pending_params": {}
+                    }
+
+            return {"messages": new_msgs}
+        except Exception as e:
+            logger.error(f"[OpsAgent] 执行失败: {e}")
+            return {"messages": [AIMessage(content=f"OpsAgent 执行出错: {str(e)}")]}
+
+    def _extract_operation_type(self, user_content: str) -> str:
+        """从用户消息中提取操作类型"""
+        user_content_lower = user_content.lower()
+
+        if "配置" in user_content or "config" in user_content_lower:
+            return "view_config"
+        elif "清理" in user_content or "clean" in user_content_lower:
+            return "cleanup_data"
+        elif "服务状态" in user_content or "service" in user_content_lower:
+            return "check_service"
+        elif "重启" in user_content or "restart" in user_content_lower:
+            return "restart_service"
+        elif "删除" in user_content or "delete" in user_content_lower:
+            return "delete_batch"
+        else:
+            return "unknown"
 
     # ============================================================
     # Result Validator —— 纯 Python 错误检测
@@ -419,16 +625,22 @@ class ReactAgent:
     def execute_stream(self, query: str):
         logger.info(f"[execute_stream] 开始处理: {query}")
 
+        # 合并之前的对话状态
+        messages = self.conversation_state["messages"].copy()
+        messages.append({"role": "user", "content": query})
+
         input_dict = {
-            "messages":             [{"role": "user", "content": query}],
+            "messages":             messages,
             "intent":               "",
             "confidence":           0.0,
             "retry_count":          0,
             "error_type":           "",
             "next_agent_override":  "",
+            "pending_operation":    self.conversation_state["pending_operation"],
+            "pending_params":       self.conversation_state["pending_params"],
         }
 
-        yielded_count = 1  # 用户消息已算一条，跳过
+        yielded_count = len(messages)  # 跳过已有的消息
 
         try:
             for chunk in self.graph.stream(input_dict, stream_mode="values"):
@@ -464,6 +676,13 @@ class ReactAgent:
                             yield f"\n[{tool_name} 执行完成]\n"
 
                 yielded_count = len(messages)
+
+                # 保存最新的状态（每次迭代都保存）
+                self.conversation_state["messages"] = chunk.get("messages", [])
+                if "pending_operation" in chunk:
+                    self.conversation_state["pending_operation"] = chunk.get("pending_operation", "")
+                if "pending_params" in chunk:
+                    self.conversation_state["pending_params"] = chunk.get("pending_params", {})
 
         except Exception as e:
             logger.error(f"[execute_stream] 执行出错: {e}")

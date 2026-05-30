@@ -74,3 +74,28 @@ tools:
       check_disk: true
       check_memory: true
       check_network: true
+
+# 运维Agent配置
+ops_agent:
+  name: "HDFS运维专家"
+  description: "专门负责系统状态检查、服务管理、数据清理等运维操作的Agent"
+  reasoning_type: "react"
+
+  # 工具配置
+  tools:
+    - "check_system_status"
+    - "view_system_config"
+    - "cleanup_redis_data"
+    - "check_service_status"
+    - "restart_service"
+    - "delete_offline_batch"
+
+  # 二次确认配置
+  confirmation:
+    required_for:
+      - "view_system_config"
+      - "cleanup_redis_data"
+      - "check_service_status"
+      - "restart_service"
+      - "delete_offline_batch"
+    confirm_keyword: "confirm"

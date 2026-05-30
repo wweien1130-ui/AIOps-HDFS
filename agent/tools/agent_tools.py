@@ -601,3 +601,348 @@ def stop_realtime_service() -> str:
         return f"✅ 已停止实时监控服务！\n\n停止顺序：日志切分 → 监控服务\n停止的进程: {len(stopped)}个"
     else:
         return "⚠️ 没有正在运行的实时监控服务"
+  
+  
+# ============================================================
+# 运维管理工具
+# ============================================================
+
+@tool(description="检查系统组件连接状态（ClickHouse、Redis、Kafka）")
+def check_system_status() -> str:
+    """
+    检查系统所有组件的连接状态：
+    1. ClickHouse 连接状态
+    2. Redis 连接状态
+    3. Kafka 连接状态
+    """
+    import yaml
+
+    config_dir = get_abs_path("config")
+    status_list = ["📊 **系统组件状态检查**", ""]
+
+    # 检查 ClickHouse
+    try:
+        import clickhouse_connect
+        ch_path = os.path.join(config_dir, 'clickhouse.yaml')
+        with open(ch_path, 'r', encoding='utf-8') as f:
+            ch_config = yaml.safe_load(f)['clickhouse']['online']
+
+        client = clickhouse_connect.get_client(
+            host=ch_config['host'],
+            port=ch_config.get('http_port', 8123),
+            username=ch_config.get('username', 'default'),
+            password=ch_config.get('password', '')
+        )
+        client.ping()
+        status_list.append(f"✅ ClickHouse: {ch_config['host']}:{ch_config.get('http_port', 8123)}")
+    except ImportError:
+        status_list.append("⚠️ ClickHouse: 未安装 clickhouse_connect 模块")
+    except Exception as e:
+        status_list.append(f"❌ ClickHouse 连接失败: {str(e)}")
+
+    # 检查 Redis
+    try:
+        import redis
+        redis_path = os.path.join(config_dir, 'redis.yaml')
+        with open(redis_path, 'r', encoding='utf-8') as f:
+            redis_config = yaml.safe_load(f)['redis']
+
+        r = redis.Redis(
+            host=redis_config['host'],
+            port=redis_config['port'],
+            db=redis_config.get('db', 0),
+            password=redis_config.get('password'),
+            decode_responses=True
+        )
+        r.ping()
+        status_list.append(f"✅ Redis: {redis_config['host']}:{redis_config['port']}")
+    except ImportError:
+        status_list.append("⚠️ Redis: 未安装 redis 模块")
+    except Exception as e:
+        status_list.append(f"❌ Redis 连接失败: {str(e)}")
+
+    # 检查 Kafka
+    try:
+        from kafka import KafkaConsumer
+        kafka_path = os.path.join(config_dir, 'kafka.yml')
+        with open(kafka_path, 'r', encoding='utf-8') as f:
+            kafka_config = yaml.safe_load(f)['kafka']
+
+        consumer = KafkaConsumer(
+            bootstrap_servers=kafka_config['bootstrap_servers'],
+            group_id='status_check'
+        )
+        consumer.close()
+        status_list.append(f"✅ Kafka: {kafka_config['bootstrap_servers']}")
+    except ImportError:
+        status_list.append("⚠️ Kafka: 未安装 kafka-python 模块")
+    except Exception as e:
+        status_list.append(f"❌ Kafka 连接失败: {str(e)}")
+
+    return "\n".join(status_list)
+
+
+@tool(description="查看系统配置信息（需要二次确认）")
+def view_system_config(confirm: bool = False) -> str:
+    """
+    查看系统配置信息，包括：
+    - ClickHouse 配置
+    - Redis 配置
+    - Kafka 配置
+
+    参数：
+    confirm: 必须为 True 才能查看配置（二次确认机制）
+    """
+    if not confirm:
+        return "⚠️ 查看配置需要确认！请回复 'confirm' 或设置 confirm=True"
+
+    import yaml
+
+    config_dir = get_abs_path("config")
+    result = ["📋 **系统配置信息**", ""]
+
+    # ClickHouse 配置
+    try:
+        ch_path = os.path.join(config_dir, 'clickhouse.yaml')
+        with open(ch_path, 'r', encoding='utf-8') as f:
+            ch_config = yaml.safe_load(f)['clickhouse']
+        result.append("### ClickHouse 配置")
+        result.append(f"- Online Host: {ch_config['online']['host']}:{ch_config['online'].get('http_port', 8123)}")
+        result.append(f"- Offline Host: {ch_config['offline']['host']}:{ch_config['offline'].get('http_port', 8123)}")
+        result.append(f"- Database: online={ch_config['online']['database']}, offline={ch_config['offline']['database']}")
+        result.append("")
+    except Exception as e:
+        result.append(f"❌ 读取 ClickHouse 配置失败: {str(e)}")
+        result.append("")
+
+    # Redis 配置
+    try:
+        redis_path = os.path.join(config_dir, 'redis.yaml')
+        with open(redis_path, 'r', encoding='utf-8') as f:
+            redis_config = yaml.safe_load(f)['redis']
+        result.append("### Redis 配置")
+        result.append(f"- Host: {redis_config['host']}:{redis_config['port']}")
+        result.append(f"- DB: {redis_config.get('db', 0)}")
+        result.append(f"- Key Prefix: {redis_config.get('key_prefix', 'anomaly:')}")
+        result.append("")
+    except Exception as e:
+        result.append(f"❌ 读取 Redis 配置失败: {str(e)}")
+        result.append("")
+
+    # Kafka 配置
+    try:
+        kafka_path = os.path.join(config_dir, 'kafka.yml')
+        with open(kafka_path, 'r', encoding='utf-8') as f:
+            kafka_config = yaml.safe_load(f)['kafka']
+        result.append("### Kafka 配置")
+        result.append(f"- Bootstrap Servers: {kafka_config['bootstrap_servers']}")
+        result.append(f"- Topics: online={kafka_config['topics']['online']}, offline={kafka_config['topics']['offline']}")
+        result.append("")
+    except Exception as e:
+        result.append(f"❌ 读取 Kafka 配置失败: {str(e)}")
+        result.append("")
+
+    return "\n".join(result)
+
+
+@tool(description="清理Redis中的过期异常数据（需要二次确认）")
+def cleanup_redis_data(confirm: bool = False) -> str:
+    """
+    清理Redis中的过期异常数据
+
+    参数：
+    confirm: 必须为 True 才能执行清理（二次确认机制）
+    """
+    if not confirm:
+        return "⚠️ 清理数据需要确认！请回复 'confirm' 或设置 confirm=True"
+
+    import yaml
+    import redis
+
+    config_dir = get_abs_path("config")
+
+    try:
+        redis_path = os.path.join(config_dir, 'redis.yaml')
+        with open(redis_path, 'r', encoding='utf-8') as f:
+            redis_config = yaml.safe_load(f)['redis']
+
+        r = redis.Redis(
+            host=redis_config['host'],
+            port=redis_config['port'],
+            db=redis_config.get('db', 0),
+            password=redis_config.get('password'),
+            decode_responses=True
+        )
+
+        key_prefix = redis_config.get('key_prefix', 'anomaly:')
+
+        # 清理 Top 异常排序集
+        r.delete(key_prefix + redis_config['keys']['top'])
+
+        # 清理异常详情 Hash
+        detail_keys = r.keys(key_prefix + redis_config['keys']['detail'] + "*")
+        if detail_keys:
+            r.delete(*detail_keys)
+
+        # 清理同步时间
+        r.delete(key_prefix + redis_config['keys']['sync_time'])
+
+        return f"✅ Redis 数据清理完成！\n\n已清理：\n- Top 异常排序集\n- 异常详情 Hash ({len(detail_keys)} 个)\n- 同步时间"
+    except Exception as e:
+        return f"❌ Redis 数据清理失败: {str(e)}"
+
+
+@tool(description="查看服务运行状态（需要二次确认）")
+def check_service_status(confirm: bool = False) -> str:
+    """
+    查看实时监控服务的运行状态
+
+    参数：
+    confirm: 必须为 True 才能查看状态（二次确认机制）
+    """
+    if not confirm:
+        return "⚠️ 查看服务状态需要确认！请回复 'confirm' 或设置 confirm=True"
+
+    import psutil
+
+    scripts = ['predictor.py', 'redis_sync.py', 'watch_folder.py', 'split_log.py']
+    running_services = []
+
+    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+        try:
+            cmdline = proc.info.get('cmdline', [])
+            if cmdline and any(script in ' '.join(cmdline) for script in scripts):
+                cmdline_str = ' '.join(cmdline)
+                for script in scripts:
+                    if script in cmdline_str:
+                        running_services.append(f"- {script} (PID: {proc.info['pid']})")
+                        break
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+
+    if running_services:
+        return "✅ **运行中的服务**\n\n" + "\n".join(running_services)
+    else:
+        return "⚠️ 没有正在运行的监控服务"
+
+
+@tool(description="重启指定服务（需要二次确认）")
+def restart_service(service_name: str, confirm: bool = False) -> str:
+    """
+    重启指定的监控服务
+
+    参数：
+    service_name: 服务名称 (predictor, redis_sync, watch_folder, all)
+    confirm: 必须为 True 才能执行重启（二次确认机制）
+    """
+    if not confirm:
+        return f"⚠️ 重启 {service_name} 服务需要确认！请回复 'confirm' 或设置 confirm=True"
+
+    import subprocess
+    import sys
+    import os
+    import psutil
+
+    scripts_dir = get_abs_path("scripts/online")
+
+    service_map = {
+        'predictor': 'predictor.py',
+        'redis_sync': 'redis_sync.py',
+        'watch_folder': 'watch_folder.py',
+        'all': 'all'
+    }
+
+    if service_name not in service_map:
+        return f"❌ 未知的服务名称: {service_name}。可选: predictor, redis_sync, watch_folder, all"
+
+    # 先停止相关服务
+    target_scripts = []
+    if service_name == 'all':
+        target_scripts = ['predictor.py', 'redis_sync.py', 'watch_folder.py']
+    else:
+        target_scripts = [service_map[service_name]]
+
+    stopped = []
+    for proc in psutil.process_iter(['pid', 'cmdline']):
+        try:
+            cmdline = proc.info.get('cmdline', [])
+            if cmdline and any(script in ' '.join(cmdline) for script in target_scripts):
+                proc.terminate()
+                stopped.append(proc.info['pid'])
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+
+    # 等待进程停止
+    import time
+    time.sleep(2)
+
+    # 启动服务
+    started = []
+    for script in target_scripts:
+        script_path = os.path.join(scripts_dir, script)
+        if os.path.exists(script_path):
+            proc = subprocess.Popen(
+                [sys.executable, script_path],
+                cwd=scripts_dir,
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
+            )
+            started.append(f"{script} (PID: {proc.pid})")
+
+    result = []
+    if stopped:
+        result.append(f"✅ 已停止 {len(stopped)} 个进程")
+    if started:
+        result.append(f"✅ 已启动 {len(started)} 个服务")
+        result.append("")
+        result.append("启动的服务:")
+        result.extend(started)
+
+    return "\n".join(result) if result else "⚠️ 没有找到可操作的服务"
+
+
+# ============================================================
+# 数据删除管理工具
+# ============================================================
+
+@tool(description="删除ClickHouse offline指定批次的数据（需要二次确认）")
+def delete_offline_batch(batch_id: str, confirm: bool = False) -> str:
+    """
+    删除ClickHouse offline库中指定批次的数据
+
+    参数：
+    batch_id: 要删除的批次ID
+    confirm: 必须为 True 才能执行删除（二次确认机制）
+    """
+    if not confirm:
+        return f"⚠️ 删除批次 {batch_id} 需要确认！请回复 'confirm' 或设置 confirm=True"
+
+    import yaml
+    import clickhouse_connect
+
+    config_dir = get_abs_path("config")
+
+    try:
+        ch_path = os.path.join(config_dir, 'clickhouse.yaml')
+        with open(ch_path, 'r', encoding='utf-8') as f:
+            ch_config = yaml.safe_load(f)['clickhouse']['offline']
+
+        client = clickhouse_connect.get_client(
+            host=ch_config['host'],
+            port=ch_config.get('http_port', 8123),
+            username=ch_config.get('username', 'default'),
+            password=ch_config.get('password', '')
+        )
+
+        # 删除相关数据
+        queries = [
+            f"DELETE FROM offline.block_event_stats WHERE batch_id = {batch_id}",
+            f"DELETE FROM offline.anomaly_blocks WHERE batch_id = {batch_id}",
+            f"DELETE FROM offline.hdfs_logs WHERE batch_id = {batch_id}"
+        ]
+
+        for query in queries:
+            client.execute(query)
+
+        return f"✅ 批次 {batch_id} 数据已删除！"
+    except Exception as e:
+        return f"❌ 删除失败: {str(e)}" 
