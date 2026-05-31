@@ -41,6 +41,19 @@
             <el-icon><Refresh /></el-icon>
             刷新数据
           </el-button>
+          <el-input
+            v-model="timeRangeInput"
+            placeholder="输入时间范围 (如: 2h, 30m, 1d, 90s)"
+            style="width: 200px;"
+            @keyup.enter="queryByTimeRange"
+          >
+            <template #prepend>
+              <el-icon><Clock /></el-icon>
+            </template>
+          </el-input>
+          <el-button type="info" @click="queryByTimeRange">
+            查询
+          </el-button>
         </div>
       </div>
     </el-header>
@@ -131,6 +144,13 @@
                   <div class="card-header">
                     <el-icon><PieChart /></el-icon>
                     <span>异常类型分布</span>
+                    <div style="margin-left: auto;">
+                      <el-radio-group v-model="chartType" size="small">
+                        <el-radio-button label="pie">饼图</el-radio-button>
+                        <el-radio-button label="bar">柱状图</el-radio-button>
+                        <el-radio-button label="line">折线图</el-radio-button>
+                      </el-radio-group>
+                    </div>
                   </div>
                 </template>
                 <div class="chart-container" ref="pieChartRef"></div>
@@ -188,16 +208,17 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed, nextTick, onBeforeUnmount } from 'vue'
+import { ref, onMounted, computed, nextTick, onBeforeUnmount, watch } from 'vue'
 import { marked } from 'marked'
 import * as echarts from 'echarts'
 import { ElMessage } from 'element-plus'
-import { Plus } from '@element-plus/icons-vue'
+import { Plus, Clock } from '@element-plus/icons-vue'
 
 const API_BASE = '/api'
 
 const loading = ref(false)
-const isRealtime = ref(false)  // 默认关闭实时模式
+const isRealtime = ref(true)  // 默认开启实时模式（使用ClickHouse数据）
+const timeRangeInput = ref('1h')  // 时间范围输入框默认值
 const isTyping = ref(false)
 const userInput = ref('')
 const chatMessages = ref([
@@ -329,6 +350,10 @@ const gaugeOption = computed(() => ({
   ]
 }))
 
+// 当前选中的图表类型
+const chartType = ref('pie')
+
+// 饼图配置（自动显示数据标签）
 const pieOption = computed(() => {
   const eventCounts = {}
   topAnomalies.value.forEach(anomaly => {
@@ -350,36 +375,54 @@ const pieOption = computed(() => {
     },
     legend: {
       orient: 'vertical',
-      left: 'left',
+      right: 10,
+      top: 'center',
       textStyle: {
-        color: '#fff'
-      }
+        color: '#fff',
+        fontSize: 10
+      },
+      itemWidth: 12,
+      itemHeight: 8,
+      itemGap: 5
     },
     series: [
       {
         name: '异常类型',
         type: 'pie',
-        radius: ['40%', '70%'],
-        avoidLabelOverlap: false,
+        radius: ['35%', '65%'],
+        center: ['35%', '50%'],
+        avoidLabelOverlap: true,
         itemStyle: {
-          borderRadius: 10,
+          borderRadius: 8,
           borderColor: '#1a1a2e',
           borderWidth: 2
         },
         label: {
-          show: false,
-          position: 'center'
+          show: true,
+          position: 'outside',
+          formatter: '{b}\n{c}',
+          fontSize: 10,
+          color: '#fff',
+          lineHeight: 14
         },
         emphasis: {
           label: {
             show: true,
-            fontSize: 16,
+            fontSize: 12,
             fontWeight: 'bold',
             color: '#fff'
+          },
+          itemStyle: {
+            shadowBlur: 10,
+            shadowOffsetX: 0,
+            shadowColor: 'rgba(0, 0, 0, 0.5)'
           }
         },
         labelLine: {
-          show: false
+          show: true,
+          length: 8,
+          length2: 8,
+          smooth: 0.2
         },
         data: pieData,
         color: [
@@ -391,6 +434,188 @@ const pieOption = computed(() => {
   }
 })
 
+// 柱状图配置
+const barOption = computed(() => {
+  const eventCounts = {}
+  topAnomalies.value.forEach(anomaly => {
+    anomaly.events.forEach(event => {
+      const eventId = event.event_id
+      eventCounts[eventId] = (eventCounts[eventId] || 0) + event.count
+    })
+  })
+
+  const barData = Object.entries(eventCounts)
+    .map(([name, value]) => ({ name, value }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 10)
+
+  return {
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: {
+        type: 'shadow'
+      },
+      formatter: '{b}: {c} 次'
+    },
+    grid: {
+      left: '8%',
+      right: '5%',
+      bottom: '15%',
+      top: '10%',
+      containLabel: true
+    },
+    xAxis: {
+      type: 'category',
+      data: barData.map(item => item.name),
+      axisLabel: {
+        color: '#fff',
+        fontSize: 9,
+        rotate: 45,
+        interval: 0
+      },
+      axisLine: {
+        lineStyle: {
+          color: '#58D9F9'
+        }
+      }
+    },
+    yAxis: {
+      type: 'value',
+      axisLabel: {
+        color: '#fff',
+        fontSize: 10
+      },
+      axisLine: {
+        lineStyle: {
+          color: '#58D9F9'
+        }
+      },
+      splitLine: {
+        lineStyle: {
+          color: 'rgba(255,255,255,0.1)'
+        }
+      }
+    },
+    series: [
+      {
+        name: '异常次数',
+        type: 'bar',
+        data: barData.map(item => item.value),
+        itemStyle: {
+          borderRadius: [4, 4, 0, 0],
+          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: '#4ECDC4' },
+            { offset: 1, color: '#45B7D1' }
+          ])
+        },
+        label: {
+          show: true,
+          position: 'top',
+          color: '#fff',
+          fontSize: 9
+        }
+      }
+    ]
+  }
+})
+
+// 折线图配置
+const lineOption = computed(() => {
+  const eventCounts = {}
+  topAnomalies.value.forEach(anomaly => {
+    anomaly.events.forEach(event => {
+      const eventId = event.event_id
+      eventCounts[eventId] = (eventCounts[eventId] || 0) + event.count
+    })
+  })
+
+  const lineData = Object.entries(eventCounts)
+    .map(([name, value]) => ({ name, value }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 10)
+
+  return {
+    tooltip: {
+      trigger: 'axis',
+      formatter: '{b}: {c} 次'
+    },
+    grid: {
+      left: '8%',
+      right: '5%',
+      bottom: '15%',
+      top: '10%',
+      containLabel: true
+    },
+    xAxis: {
+      type: 'category',
+      data: lineData.map(item => item.name),
+      axisLabel: {
+        color: '#fff',
+        fontSize: 9,
+        rotate: 45,
+        interval: 0
+      },
+      axisLine: {
+        lineStyle: {
+          color: '#58D9F9'
+        }
+      }
+    },
+    yAxis: {
+      type: 'value',
+      axisLabel: {
+        color: '#fff',
+        fontSize: 10
+      },
+      axisLine: {
+        lineStyle: {
+          color: '#58D9F9'
+        }
+      },
+      splitLine: {
+        lineStyle: {
+          color: 'rgba(255,255,255,0.1)'
+        }
+      }
+    },
+    series: [
+      {
+        name: '异常次数',
+        type: 'line',
+        data: lineData.map(item => item.value),
+        smooth: true,
+        itemStyle: {
+          color: '#FF6B6B'
+        },
+        areaStyle: {
+          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: 'rgba(255,107,107,0.5)' },
+            { offset: 1, color: 'rgba(255,107,107,0.1)' }
+          ])
+        },
+        label: {
+          show: true,
+          position: 'top',
+          color: '#fff',
+          fontSize: 9
+        }
+      }
+    ]
+  }
+})
+
+// 根据当前选中的图表类型返回对应的配置
+const currentChartOption = computed(() => {
+  switch (chartType.value) {
+    case 'bar':
+      return barOption.value
+    case 'line':
+      return lineOption.value
+    default:
+      return pieOption.value
+  }
+})
+
 function getProgressColor(probability) {
   if (probability > 0.8) return '#FF6B6B'
   if (probability > 0.5) return '#FFB347'
@@ -399,19 +624,75 @@ function getProgressColor(probability) {
 
 async function fetchAnalyzeData() {
   try {
-    const response = await fetch(`${API_BASE}/analyze`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ threshold: 0.3 })
-    })
-    const data = await response.json()
-    analyzeData.value = data
+    // 并行获取总Block数和异常数据
+    const [totalResponse, anomaliesResponse] = await Promise.all([
+      fetch(`${API_BASE}/realtime/total`),
+      fetch(`${API_BASE}/realtime/anomalies?limit=10&hours=1`)
+    ])
 
-    systemLogs.value.unshift({
-      time: new Date().toLocaleTimeString(),
-      message: `检测完成：发现 ${data.anomaly_count} 个异常块`,
-      type: data.anomaly_count > 0 ? 'warning' : 'success'
-    })
+    const totalResult = await totalResponse.json()
+    const totalBlocks = totalResult.total_blocks || 0
+
+    const result = await anomaliesResponse.json()
+
+    if (result.anomalies && result.anomalies.length > 0) {
+      const eventDist = result.event_distribution || {}
+      const topAnomalies = result.anomalies.map(a => {
+        const events = Object.entries(a)
+          .filter(([k]) => k.startsWith('E'))
+          .map(([k, v]) => ({ event_id: k, count: parseInt(v) || 0 }))
+        if (events.length === 0) {
+          Object.entries(eventDist).forEach(([k, v]) => {
+            if (k.startsWith('E')) events.push({ event_id: k, count: parseInt(v) || 0 })
+          })
+          events.sort((a, b) => b.count - a.count)
+          events.splice(6)
+        }
+        return {
+          block_id: a.block_id,
+          probability: parseFloat(a.anomaly_score) || 0,
+          events: events.filter(e => e.count > 0)
+        }
+      })
+
+      const eventDistribution = {}
+      topAnomalies.forEach(anomaly => {
+        anomaly.events.forEach(evt => {
+          eventDistribution[evt.event_id] = (eventDistribution[evt.event_id] || 0) + evt.count
+        })
+      })
+
+      // 计算系统健康度
+      const anomalyRatio = totalBlocks > 0 ? topAnomalies.length / totalBlocks : 0
+
+      analyzeData.value = {
+        total_blocks: totalBlocks,
+        anomaly_count: topAnomalies.length,
+        anomaly_ratio: anomalyRatio,
+        top_anomalies: topAnomalies,
+        event_distribution: eventDistribution
+      }
+
+      systemLogs.value.unshift({
+        time: new Date().toLocaleTimeString(),
+        message: `检测完成：总Block ${totalBlocks}，异常 ${topAnomalies.length} 个 (健康度: ${((1 - anomalyRatio) * 100).toFixed(1)}%)`,
+        type: topAnomalies.length > 0 ? 'warning' : 'success'
+      })
+    } else {
+      analyzeData.value = {
+        total_blocks: totalBlocks,
+        anomaly_count: 0,
+        anomaly_ratio: 0,
+        top_anomalies: [],
+        event_distribution: {}
+      }
+      systemLogs.value.unshift({
+        time: new Date().toLocaleTimeString(),
+        message: `检测完成：总Block ${totalBlocks}，无异常数据`,
+        type: 'success'
+      })
+    }
+
     if (systemLogs.value.length > 10) {
       systemLogs.value.pop()
     }
@@ -430,7 +711,8 @@ async function fetchRealtimeAnomalies() {
   const timeStr = now.toLocaleTimeString()
   console.log(`[${timeStr}] 开始获取实时异常...`)
   try {
-    const response = await fetch(`${API_BASE}/realtime/anomalies?limit=10`)
+    // 获取过去1小时的异常数据
+    const response = await fetch(`${API_BASE}/realtime/anomalies?limit=100&hours=1`)
     const result = await response.json()
     console.log(`[${timeStr}] 获取成功，数据来源: ${result.source}`)
 
@@ -459,17 +741,25 @@ async function fetchRealtimeAnomalies() {
           eventDistribution[evt.event_id] = (eventDistribution[evt.event_id] || 0) + evt.count
         })
       })
+      // 获取总Block数
+      const totalResponse = await fetch(`${API_BASE}/realtime/total`)
+      const totalResult = await totalResponse.json()
+      const totalBlocks = totalResult.total_blocks || 0
+
+      // 计算系统健康度
+      const anomalyRatio = totalBlocks > 0 ? topAnomalies.length / totalBlocks : 0
+
       analyzeData.value = {
         ...analyzeData.value,
         top_anomalies: topAnomalies,
         anomaly_count: topAnomalies.length,
-        total_blocks: 100,
-        anomaly_ratio: topAnomalies.length / 100,
+        total_blocks: totalBlocks,
+        anomaly_ratio: anomalyRatio,
         event_distribution: eventDistribution
       }
       systemLogs.value.unshift({
         time: new Date().toLocaleTimeString(),
-        message: `实时异常：发现 ${topAnomalies.length} 个异常块（${result.source}）`,
+        message: `实时异常：总Block ${totalBlocks}，异常 ${topAnomalies.length} 个 (健康度: ${((1 - anomalyRatio) * 100).toFixed(1)}%)`,
         type: 'success'
       })
       if (systemLogs.value.length > 10) {
@@ -498,6 +788,177 @@ async function refreshData() {
   await fetchRealtimeAnomalies()
   updateCharts()
   loading.value = false
+}
+
+function parseTimeRange(input) {
+  /**
+   * 解析时间范围输入
+   * 支持格式: 2h, 30m, 90s, 1d, 1h30m, 2h30m15s 等
+   */
+  input = input.trim().toLowerCase()
+
+  // 提取数字和单位
+  const regex = /(\d+)([smhd])/g
+  let totalSeconds = 0
+  let match
+
+  while ((match = regex.exec(input)) !== null) {
+    const value = parseInt(match[1])
+    const unit = match[2]
+
+    switch (unit) {
+      case 's':
+        totalSeconds += value
+        break
+      case 'm':
+        totalSeconds += value * 60
+        break
+      case 'h':
+        totalSeconds += value * 3600
+        break
+      case 'd':
+        totalSeconds += value * 86400
+        break
+    }
+  }
+
+  // 如果没有匹配到任何单位，假设是小时
+  if (totalSeconds === 0) {
+    const hours = parseInt(input) || 1
+    totalSeconds = hours * 3600
+  }
+
+  return totalSeconds
+}
+
+async function queryByTimeRange() {
+  try {
+    const seconds = parseTimeRange(timeRangeInput.value)
+
+    if (seconds <= 0) {
+      ElMessage.error('请输入有效的时间范围')
+      return
+    }
+
+    // 构建查询参数
+    let queryParams = `limit=100`
+
+    // 根据时间范围选择合适的单位
+    if (seconds < 60) {
+      queryParams += `&seconds=${seconds}`
+    } else if (seconds < 3600) {
+      queryParams += `&minutes=${Math.floor(seconds / 60)}`
+    } else if (seconds < 86400) {
+      queryParams += `&hours=${Math.floor(seconds / 3600)}`
+    } else {
+      queryParams += `&days=${Math.floor(seconds / 86400)}`
+    }
+
+    // 并行获取总Block数和异常数据
+    const [totalResponse, anomaliesResponse] = await Promise.all([
+      fetch(`${API_BASE}/realtime/total`),
+      fetch(`${API_BASE}/anomalies/query?${queryParams}`)
+    ])
+
+    const totalResult = await totalResponse.json()
+    const totalBlocks = totalResult.total_blocks || 0
+
+    const result = await anomaliesResponse.json()
+
+    if (result.anomalies && result.anomalies.length > 0) {
+      const eventDist = result.event_distribution || {}
+      const topAnomalies = result.anomalies.map(a => {
+        const events = Object.entries(a)
+          .filter(([k]) => k.startsWith('E'))
+          .map(([k, v]) => ({ event_id: k, count: parseInt(v) || 0 }))
+        if (events.length === 0) {
+          Object.entries(eventDist).forEach(([k, v]) => {
+            if (k.startsWith('E')) events.push({ event_id: k, count: parseInt(v) || 0 })
+          })
+          events.sort((a, b) => b.count - a.count)
+          events.splice(6)
+        }
+        return {
+          block_id: a.block_id,
+          probability: parseFloat(a.anomaly_score) || 0,
+          events: events.filter(e => e.count > 0)
+        }
+      })
+
+      const eventDistribution = {}
+      topAnomalies.forEach(anomaly => {
+        anomaly.events.forEach(evt => {
+          eventDistribution[evt.event_id] = (eventDistribution[evt.event_id] || 0) + evt.count
+        })
+      })
+
+      // 计算系统健康度
+      const anomalyRatio = totalBlocks > 0 ? topAnomalies.length / totalBlocks : 0
+
+      analyzeData.value = {
+        total_blocks: totalBlocks,
+        anomaly_count: topAnomalies.length,
+        anomaly_ratio: anomalyRatio,
+        top_anomalies: topAnomalies,
+        event_distribution: eventDistribution
+      }
+
+      updateCharts()
+
+      // 格式化时间显示
+      const timeDisplay = formatTimeDisplay(seconds)
+
+      ElMessage.success(`查询${timeDisplay}：发现 ${topAnomalies.length} 个异常 (健康度: ${((1 - anomalyRatio) * 100).toFixed(1)}%)`)
+      systemLogs.value.unshift({
+        time: new Date().toLocaleTimeString(),
+        message: `查询${timeDisplay}：总Block ${totalBlocks}，异常 ${topAnomalies.length} 个`,
+        type: topAnomalies.length > 0 ? 'warning' : 'info'
+      })
+    } else {
+      analyzeData.value = {
+        total_blocks: totalBlocks,
+        anomaly_count: 0,
+        anomaly_ratio: 0,
+        top_anomalies: [],
+        event_distribution: {}
+      }
+      updateCharts()
+
+      const timeDisplay = formatTimeDisplay(seconds)
+      ElMessage.info(`${timeDisplay}内没有异常数据`)
+      systemLogs.value.unshift({
+        time: new Date().toLocaleTimeString(),
+        message: `查询${timeDisplay}：总Block ${totalBlocks}，无异常数据`,
+        type: 'info'
+      })
+    }
+  } catch (error) {
+    console.error('查询异常失败:', error)
+    ElMessage.error('查询失败: ' + error.message)
+    systemLogs.value.unshift({
+      time: new Date().toLocaleTimeString(),
+      message: `查询失败: ${error.message}`,
+      type: 'danger'
+    })
+  }
+}
+
+function formatTimeDisplay(seconds) {
+  /**
+   * 格式化时间显示
+   */
+  if (seconds < 60) {
+    return `过去${seconds}秒`
+  } else if (seconds < 3600) {
+    const minutes = Math.floor(seconds / 60)
+    return `过去${minutes}分钟`
+  } else if (seconds < 86400) {
+    const hours = Math.floor(seconds / 3600)
+    return `过去${hours}小时`
+  } else {
+    const days = Math.floor(seconds / 86400)
+    return `过去${days}天`
+  }
 }
 
 async function sendMessage() {
@@ -826,6 +1287,13 @@ async function exportAnomalies() {
   }
 }
 
+// 监听图表类型变化，自动更新图表
+watch(chartType, () => {
+  if (pieChart) {
+    pieChart.setOption(currentChartOption.value, true)
+  }
+})
+
 onMounted(() => {
   nextTick(() => {
     if (gaugeChartRef.value) {
@@ -868,35 +1336,9 @@ function updateCharts() {
     })
   }
 
-  // E事件分布饼图
-  const eventDist = analyzeData.value.event_distribution || {}
-  let pieData = Object.entries(eventDist)
-    .filter(([name, value]) => value > 0)
-    .map(([name, value]) => ({ name, value }))
-    .sort((a, b) => b.value - a.value)
-    .slice(0, 10)
-  
-  // 如果没有E事件分布数据，显示正常/异常比例
-  if (pieData.length === 0) {
-    pieData = [
-      { name: '正常', value: analyzeData.value.total_blocks - analyzeData.value.anomaly_count },
-      { name: '异常', value: analyzeData.value.anomaly_count }
-    ]
-  }
-
+  // 更新异常类型分布图表
   if (pieChart) {
-    pieChart.setOption({
-      tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
-      series: [{
-        name: '异常类型',
-        type: 'pie',
-        radius: ['40%', '70%'],
-        itemStyle: { borderRadius: 10, borderColor: '#1a1a2e', borderWidth: 2 },
-        label: { show: false },
-        data: pieData,
-        color: ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8', '#F7DC6F']
-      }]
-    })
+    pieChart.setOption(currentChartOption.value, true)
   }
 }
 </script>
@@ -1239,10 +1681,28 @@ function updateCharts() {
   --el-table-bg-color: transparent;
   --el-table-tr-bg-color: transparent;
   --el-table-header-bg-color: rgba(255, 255, 255, 0.05);
-  --el-table-row-hover-bg-color: rgba(255, 255, 255, 0.05);
+  --el-table-row-hover-bg-color: rgba(255, 255, 255, 0.1);
   --el-table-border-color: rgba(255, 255, 255, 0.1);
   --el-table-text-color: #fff;
   --el-table-header-text-color: #58D9F9;
+}
+
+/* 修复斑马纹行的背景色 */
+.table-card :deep(.el-table__row--striped) {
+  background-color: rgba(255, 255, 255, 0.03) !important;
+}
+
+.table-card :deep(.el-table__row--striped) td {
+  background-color: rgba(255, 255, 255, 0.03) !important;
+}
+
+/* 确保所有行都有正确的背景色 */
+.table-card :deep(.el-table__row) {
+  background-color: transparent;
+}
+
+.table-card :deep(.el-table__row) td {
+  background-color: transparent;
 }
 
 :deep(.el-table__empty-text) {

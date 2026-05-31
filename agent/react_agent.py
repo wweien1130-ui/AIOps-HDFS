@@ -27,7 +27,7 @@ from agent.tools.agent_tools import (
     get_realtime_anomalies, start_realtime_service, stop_realtime_service,
     # 运维工具
     check_system_status, view_system_config, cleanup_redis_data,
-    check_service_status, restart_service, delete_offline_batch,
+    check_service_status, restart_service, delete_offline_batch, delete_all_offline_batches,
 )
 from utils.prompt_loader import (
     load_system_prompts,    #系统提示词
@@ -156,6 +156,7 @@ class ReactAgent:
                 restart_service,
                 # 数据删除（需要确认）
                 delete_offline_batch,
+                delete_all_offline_batches,
             ],
         )
 
@@ -492,21 +493,30 @@ class ReactAgent:
             new_msgs = all_msgs[existing_count:]
 
             # 检查是否需要记录待确认的操作
-            # 通过分析最后一条AI消息来判断
-            if new_msgs:
-                last_ai_msg = new_msgs[-1]
-                msg_content = getattr(last_ai_msg, "content", "") if hasattr(last_ai_msg, "content") else str(last_ai_msg)
+            # 通过分析所有新消息来判断（包括工具消息）
+            needs_confirmation = False
+            for msg in new_msgs:
+                if isinstance(msg, dict):
+                    msg_type = msg.get("type", "")
+                    msg_content = msg.get("content", "")
+                else:
+                    msg_type = getattr(msg, "type", "")
+                    msg_content = getattr(msg, "content", "")
 
-                # 如果消息中包含"确认"关键词，说明需要确认
-                if "确认" in msg_content or "confirm" in msg_content.lower():
-                    # 从用户消息中提取操作类型
-                    operation = self._extract_operation_type(last_content)
-                    logger.info(f"[OpsAgent] 记录待确认操作: {operation}")
-                    return {
-                        "messages": new_msgs,
-                        "pending_operation": operation,
-                        "pending_params": {}
-                    }
+                # 检查工具消息或AI消息中是否包含确认关键词
+                if msg_type in ["tool", "ai"] and ("确认" in msg_content or "confirm" in msg_content.lower()):
+                    needs_confirmation = True
+                    break
+
+            if needs_confirmation:
+                # 从用户消息中提取操作类型
+                operation = self._extract_operation_type(last_content)
+                logger.info(f"[OpsAgent] 记录待确认操作: {operation}")
+                return {
+                    "messages": new_msgs,
+                    "pending_operation": operation,
+                    "pending_params": {}
+                }
 
             return {"messages": new_msgs}
         except Exception as e:

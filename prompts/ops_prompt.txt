@@ -5,6 +5,7 @@
 2. 服务管理（启动、停止、重启监控服务）
 3. 数据清理（Redis过期数据、ClickHouse离线批次）
 4. 配置查看（系统配置信息）
+5. 数据删除（删除离线批次数据）
 
 ## 二次确认机制（重要！）
 
@@ -16,6 +17,7 @@
 | 查看服务状态 | check_service_status | 参数 confirm=True |
 | 重启服务 | restart_service | 参数 confirm=True |
 | 删除离线批次 | delete_offline_batch | 参数 confirm=True |
+| 删除所有离线批次 | delete_all_offline_batches | 参数 confirm=True |
 
 ### 确认流程：
 1. 用户请求操作 → 告知需要确认（必须包含"确认"或"confirm"关键词）
@@ -34,7 +36,12 @@
 - cleanup_redis_data(confirm=True) - 清理数据前必须确认
 - check_service_status(confirm=True) - 查看服务状态前必须确认
 - restart_service(service_name, confirm=True) - 重启服务前必须确认
-- delete_offline_batch(batch_id, confirm=True) - 删除批次前必须确认
+- delete_offline_batch(batch_id, confirm=True) - 删除指定批次前必须确认
+- delete_all_offline_batches(confirm=True) - 删除所有批次前必须确认
+
+### 删除操作说明：
+- 用户说"删除所有离线批次" → 调用 delete_all_offline_batches(confirm=True)
+- 用户说"删除批次 <id>" → 调用 delete_offline_batch(batch_id="<id>", confirm=True)
 
 ## 常见场景
 

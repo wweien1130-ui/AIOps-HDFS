@@ -114,92 +114,91 @@ async def health_check():
 @app.post("/api/analyze", response_model=AnalyzeResponse)
 async def analyze_logs(request: AnalyzeRequest):
     """
-    执行MLP异常检测，返回结构化JSON数据
-    使用sklearn模型
+    从ClickHouse获取异常检测数据，返回结构化JSON数据
+    所有数据基于ClickHouse在线库，不再使用本地MLP模型
     """
-    import joblib
+    import yaml
+    import clickhouse_connect
 
-    model_path = get_abs_path("BackUp/Preprocess_File/block_anomaly_model.pkl")
-    scaler_path = get_abs_path("BackUp/Preprocess_File/scaler.pkl")
-    matrix_file = get_abs_path("BackUp/File/Event_occurrence_matrix.csv")
+    config_dir = get_abs_path("config")
+    ch_config_path = os.path.join(config_dir, "clickhouse.yaml")
 
-    # 如果模型不存在，自动训练
-    if not os.path.exists(model_path) or not os.path.exists(scaler_path):
-        print("[/api/analyze] 模型不存在，开始自动训练...")
+    try:
+        # 读取ClickHouse配置
+        with open(ch_config_path, 'r', encoding='utf-8') as f:
+            ch_config = yaml.safe_load(f)['clickhouse']['online']
 
-        from model.mlp_model import train_mlp
-
-        model_out, scaler_out, f1 = train_mlp(
-            data_file=matrix_file,
-            epochs=50,
-            model_out=model_path,
-            scaler_out=scaler_path
+        # 连接ClickHouse
+        client = clickhouse_connect.get_client(
+            host=ch_config['host'],
+            port=ch_config.get('http_port', 8123),
+            username=ch_config.get('username', 'default'),
+            password=ch_config.get('password', '')
         )
 
-        print(f"[api/analyze] 自动训练完成，F1: {f1}")
+        # 查询所有Block总数（从block_event_stats表）
+        total_query = """
+        SELECT COUNT(DISTINCT block_id) as total_blocks
+        FROM online.block_event_stats
+        """
+        total_result = client.query_df(total_query)
+        total_blocks = int(total_result.iloc[0]['total_blocks']) if not total_result.empty else 0
 
-    # 加载sklearn模型
-    try:
-        model = joblib.load(model_path)
-        scaler = joblib.load(scaler_path)
-        data = pd.read_csv(matrix_file)
+        # 查询异常Block（从anomaly_blocks表，过去1小时）
+        anomaly_query = """
+        SELECT
+            block_id,
+            anomaly_score,
+            detected_at,
+            E1, E2, E3, E4, E5, E6, E7, E8, E9, E10,
+            E11, E12, E13, E14, E15, E16, E17, E18, E19, E20,
+            E21, E22, E23, E24, E25, E26, E27, E28, E29
+        FROM online.anomaly_blocks
+        WHERE detected_at >= now() - INTERVAL 1 HOUR
+        ORDER BY anomaly_score DESC
+        LIMIT 100
+        """
+        anomalies_df = client.query_df(anomaly_query)
 
-        # 提取特征
-        feature_cols = [f'E{i}' for i in range(1, 30)]
-        X = data[feature_cols].fillna(0)
-
-        # 预测
-        X_scaled = scaler.transform(X)
-        preds = model.predict(X_scaled)
-        probs = model.predict_proba(X_scaled)[:, 1]
-
-        data['prediction'] = ['Fail' if p == 1 else 'Success' for p in preds]
-        data['anomaly_prob'] = probs
-
-        # 筛选异常 - 按E事件总数降序排序，这样能看到更多不同的E模式
-        anomalies = data[data['prediction'] == 'Fail'].copy()
-        anomalies['total_events'] = anomalies[[f'E{i}' for i in range(1, 30)]].sum(axis=1)
-        anomalies = anomalies.sort_values('total_events', ascending=False)
-
-        total_blocks = len(data)
-        anomaly_count = len(anomalies)
+        anomaly_count = len(anomalies_df)
         anomaly_ratio = anomaly_count / total_blocks if total_blocks > 0 else 0
 
-        # 计算异常块的E事件分布
-        event_distribution = {f'E{i}': 0 for i in range(1, 30)}
-        for _, row in anomalies.iterrows():
-            for i in range(1, 30):
-                col = f'E{i}'
-                if col in row:
-                    event_distribution[col] += int(row[col])
+        # 计算E事件分布（从block_event_stats表）
+        event_query = """
+        SELECT
+            event_id,
+            SUM(cnt) as total_count
+        FROM online.block_event_stats
+        GROUP BY event_id
+        ORDER BY total_count DESC
+        """
+        event_df = client.query_df(event_query)
 
-        # 打印前10个异常块的实际E值
-        print(f"[api/analyze] 前10个异常的E值(按概率排序):")
-        for idx, (_, row) in enumerate(anomalies.head(10).iterrows()):
-            e5 = row.get('E5', 0)
-            e9 = row.get('E9', 0)
-            prob = row.get('anomaly_prob', 0)
-            print(f"  [{idx}] Block={row.get('BlockId')}, prob={prob:.4f}, E5={e5}, E9={e9}, E11={row.get('E11', 0)}")
+        event_distribution = {}
+        if not event_df.empty:
+            for _, row in event_df.iterrows():
+                event_distribution[row['event_id']] = int(row['total_count'])
 
-        # 返回前10个异常，包含E事件详情
+        # 构建Top 10异常Block数据
         top_anomalies = []
-        for idx, (_, row) in enumerate(anomalies.head(10).iterrows()):
-            print(f"[api/analyze] 处理第{idx}个异常: {row.get('BlockId', '')}")
+        for idx, (_, row) in enumerate(anomalies_df.head(10).iterrows()):
             events = []
             for i in range(1, 30):
                 col = f'E{i}'
                 if col in row and row[col] > 0:
                     events.append({'event_id': col, 'count': int(row[col])})
+
             # 按count降序排列
             events.sort(key=lambda x: x['count'], reverse=True)
-            print(f"[api/analyze] 事件: {events[:5]}")
 
             top_anomalies.append({
-                'block_id': row.get('BlockId', ''),
-                'probability': float(row['anomaly_prob']),
-                'label': row.get('Label', 'Unknown'),
+                'block_id': row.get('block_id', ''),
+                'probability': float(row['anomaly_score']),
+                'label': '异常' if row['anomaly_score'] > 0.5 else '正常',
                 'events': events
             })
+
+        print(f"[api/analyze] 从ClickHouse查询完成: 总Block={total_blocks}, 异常={anomaly_count}")
 
         return AnalyzeResponse(
             total_blocks=total_blocks,
@@ -458,10 +457,236 @@ async def upload_log_file(file: UploadFile = File(...)):
 #         raise HTTPException(status_code=500, detail=f"查询失败: {str(e)}")
 
 
+@app.get("/api/realtime/total")
+async def get_total_blocks():
+    """
+    获取ClickHouse中总Block数
+    """
+    import yaml
+    import clickhouse_connect
+
+    config_dir = get_abs_path("config")
+    ch_config_path = os.path.join(config_dir, "clickhouse.yaml")
+
+    try:
+        with open(ch_config_path, 'r', encoding='utf-8') as f:
+            ch_config = yaml.safe_load(f)['clickhouse']['online']
+
+        client = clickhouse_connect.get_client(
+            host=ch_config['host'],
+            port=ch_config.get('http_port', 8123),
+            username=ch_config.get('username', 'default'),
+            password=ch_config.get('password', '')
+        )
+
+        query = """
+        SELECT COUNT(DISTINCT block_id) as total_blocks
+        FROM online.block_event_stats
+        """
+        result = client.query_df(query)
+        total_blocks = int(result.iloc[0]['total_blocks']) if not result.empty else 0
+
+        return {"total_blocks": total_blocks}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"查询失败: {str(e)}")
+
+
+@app.get("/api/anomalies/recent")
+async def get_recent_anomalies(hours: int = 1, limit: int = 100):
+    """
+    查询过去N小时内的异常数据
+    """
+    import yaml
+    import clickhouse_connect
+
+    config_dir = get_abs_path("config")
+    ch_config_path = os.path.join(config_dir, "clickhouse.yaml")
+
+    try:
+        with open(ch_config_path, 'r', encoding='utf-8') as f:
+            ch_config = yaml.safe_load(f)['clickhouse']['online']
+
+        client = clickhouse_connect.get_client(
+            host=ch_config['host'],
+            port=ch_config.get('http_port', 8123),
+            username=ch_config.get('username', 'default'),
+            password=ch_config.get('password', '')
+        )
+
+        # 查询过去N小时的异常数据
+        query = f"""
+        SELECT
+            block_id,
+            anomaly_score,
+            detected_at,
+            E1, E2, E3, E4, E5, E6, E7, E8, E9, E10,
+            E11, E12, E13, E14, E15, E16, E17, E18, E19, E20,
+            E21, E22, E23, E24, E25, E26, E27, E28, E29
+        FROM online.anomaly_blocks
+        WHERE detected_at >= now() - INTERVAL {hours} HOUR
+        ORDER BY anomaly_score DESC
+        LIMIT {limit}
+        """
+        df = client.query_df(query)
+
+        if df.empty:
+            return {
+                "success": True,
+                "hours": hours,
+                "anomaly_count": 0,
+                "anomalies": [],
+                "message": f"过去{hours}小时内没有异常数据"
+            }
+
+        # 构建返回数据
+        anomalies = []
+        for _, row in df.iterrows():
+            events = []
+            for i in range(1, 30):
+                col = f'E{i}'
+                if col in row and row[col] > 0:
+                    events.append({'event_id': col, 'count': int(row[col])})
+
+            anomalies.append({
+                'block_id': row['block_id'],
+                'anomaly_score': float(row['anomaly_score']),
+                'detected_at': str(row['detected_at']),
+                'events': events
+            })
+
+        return {
+            "success": True,
+            "hours": hours,
+            "anomaly_count": len(anomalies),
+            "anomalies": anomalies,
+            "message": f"查询到过去{hours}小时内的{len(anomalies)}个异常"
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"查询失败: {str(e)}")
+
+
+@app.get("/api/anomalies/query")
+async def query_anomalies(
+    limit: int = 100,
+    hours: int = None,
+    minutes: int = None,
+    seconds: int = None,
+    days: int = None
+):
+    """
+    查询异常数据（支持灵活的时间范围）
+
+    参数说明：
+    - limit: 返回结果数量限制
+    - hours: 过去N小时
+    - minutes: 过去N分钟
+    - seconds: 过去N秒
+    - days: 过去N天
+
+    时间优先级：seconds > minutes > hours > days
+    如果多个时间参数同时指定，使用最小的时间范围
+    """
+    import yaml
+    import clickhouse_connect
+
+    config_dir = get_abs_path("config")
+    ch_config_path = os.path.join(config_dir, "clickhouse.yaml")
+
+    try:
+        with open(ch_config_path, 'r', encoding='utf-8') as f:
+            ch_config = yaml.safe_load(f)['clickhouse']['online']
+
+        client = clickhouse_connect.get_client(
+            host=ch_config['host'],
+            port=ch_config.get('http_port', 8123),
+            username=ch_config.get('username', 'default'),
+            password=ch_config.get('password', '')
+        )
+
+        # 构建时间过滤条件
+        time_conditions = []
+        if seconds is not None:
+            time_conditions.append(f"detected_at >= now() - INTERVAL {seconds} SECOND")
+        elif minutes is not None:
+            time_conditions.append(f"detected_at >= now() - INTERVAL {minutes} MINUTE")
+        elif hours is not None:
+            time_conditions.append(f"detected_at >= now() - INTERVAL {hours} HOUR")
+        elif days is not None:
+            time_conditions.append(f"detected_at >= now() - INTERVAL {days} DAY")
+        else:
+            # 默认过去1小时
+            time_conditions.append("detected_at >= now() - INTERVAL 1 HOUR")
+
+        time_filter = " AND ".join(time_conditions)
+
+        # 查询异常数据
+        query = f"""
+        SELECT
+            block_id,
+            anomaly_score,
+            detected_at,
+            E1, E2, E3, E4, E5, E6, E7, E8, E9, E10,
+            E11, E12, E13, E14, E15, E16, E17, E18, E19, E20,
+            E21, E22, E23, E24, E25, E26, E27, E28, E29
+        FROM {ch_config['database']}.anomaly_blocks
+        WHERE {time_filter}
+        ORDER BY anomaly_score DESC
+        LIMIT {limit}
+        """
+        anomalies_df = client.query_df(query)
+
+        # 查询事件分布统计
+        event_query = f"""
+        SELECT
+            event_id,
+            sum(cnt) as total_count
+        FROM {ch_config['database']}.block_event_stats
+        WHERE last_updated >= now() - INTERVAL 1 HOUR
+        GROUP BY event_id
+        ORDER BY total_count DESC
+        """
+        event_df = client.query_df(event_query)
+
+        event_distribution = {}
+        if not event_df.empty:
+            for _, row in event_df.iterrows():
+                event_distribution[row['event_id']] = int(row['total_count'])
+
+        # 构建返回数据
+        anomalies = []
+        for _, row in anomalies_df.iterrows():
+            events = []
+            for i in range(1, 30):
+                col = f'E{i}'
+                if col in row and row[col] > 0:
+                    events.append({'event_id': col, 'count': int(row[col])})
+
+            anomalies.append({
+                'block_id': row['block_id'],
+                'anomaly_score': float(row['anomaly_score']),
+                'detected_at': str(row['detected_at']),
+                'events': events
+            })
+
+        return {
+            "success": True,
+            "source": "clickhouse",
+            "time_range": time_filter,
+            "anomaly_count": len(anomalies),
+            "anomalies": anomalies,
+            "event_distribution": event_distribution
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"查询失败: {str(e)}")
+
+
 @app.get("/api/realtime/anomalies")
-async def get_realtime_anomalies(limit: int = 10):
+async def get_realtime_anomalies(limit: int = 10, hours: int = None):
     """
     获取实时异常数据（从Redis/ClickHouse），包含事件分布统计
+    支持时间过滤：hours参数指定查询过去N小时的数据
     """
     import yaml
     import clickhouse_connect
@@ -489,14 +714,28 @@ async def get_realtime_anomalies(limit: int = 10):
         )
 
         # 获取事件分布统计（从block_event_stats表）
-        event_query = """
-        SELECT 
-            event_id,
-            sum(cnt) as total_count
-        FROM {db}.block_event_stats
-        GROUP BY event_id
-        ORDER BY total_count DESC
-        """.format(db=ch_config['database'])
+        if hours:
+            # 如果指定了时间范围，只统计该时间范围内的事件
+            event_query = f"""
+            SELECT
+                event_id,
+                sum(cnt) as total_count
+            FROM {ch_config['database']}.block_event_stats
+            WHERE last_updated >= now() - INTERVAL {hours} HOUR
+            GROUP BY event_id
+            ORDER BY total_count DESC
+            """
+        else:
+            # 否则统计所有事件
+            event_query = f"""
+            SELECT
+                event_id,
+                sum(cnt) as total_count
+            FROM {ch_config['database']}.block_event_stats
+            GROUP BY event_id
+            ORDER BY total_count DESC
+            """
+
         event_df = client.query_df(event_query)
 
         event_distribution = {}
@@ -504,49 +743,67 @@ async def get_realtime_anomalies(limit: int = 10):
             for _, row in event_df.iterrows():
                 event_distribution[row['event_id']] = int(row['total_count'])
 
-        # 优先从Redis获取
-        r = redis.Redis(
-            host=redis_config['host'],
-            port=redis_config['port'],
-            db=redis_config.get('db', 0),
-            password=redis_config.get('password'),
-            decode_responses=True
-        )
+        # 优先从Redis获取（仅当没有时间过滤时）
+        if not hours:
+            r = redis.Redis(
+                host=redis_config['host'],
+                port=redis_config['port'],
+                db=redis_config.get('db', 0),
+                password=redis_config.get('password'),
+                decode_responses=True
+            )
 
-        key_prefix = redis_config.get('key_prefix', 'anomaly:')
-        top_key = key_prefix + redis_config['keys']['top']
+            key_prefix = redis_config.get('key_prefix', 'anomaly:')
+            top_key = key_prefix + redis_config['keys']['top']
 
-        # 从Redis获取Top N
-        top_anomalies = r.zrevrange(top_key, 0, limit - 1, withscores=True)
+            # 从Redis获取Top N
+            top_anomalies = r.zrevrange(top_key, 0, limit - 1, withscores=True)
 
-        if top_anomalies:
-            results = []
-            for block_id, score in top_anomalies:
-                detail_key = key_prefix + redis_config['keys']['detail'] + block_id
-                detail = r.hgetall(detail_key)
-                results.append({
-                    'block_id': block_id,
-                    'anomaly_score': score,
-                    **detail
-                })
-            return {
-                "source": "redis",
-                "anomalies": results,
-                "event_distribution": event_distribution
-            }
+            if top_anomalies:
+                results = []
+                for block_id, score in top_anomalies:
+                    detail_key = key_prefix + redis_config['keys']['detail'] + block_id
+                    detail = r.hgetall(detail_key)
+                    results.append({
+                        'block_id': block_id,
+                        'anomaly_score': score,
+                        **detail
+                    })
+                return {
+                    "source": "redis",
+                    "anomalies": results,
+                    "event_distribution": event_distribution
+                }
 
-        # Redis无数据，从ClickHouse获取
-        query = f"""
-            SELECT 
-            block_id, 
-            anomaly_score, 
-            detected_at,
-            E1, E2, E3, E4, E5, E6, E7, E8, E9, E10,
-            E11, E12, E13, E14, E15, E16, E17, E18, E19, E20,
-            E21, E22, E23, E24, E25, E26, E27, E28, E29        FROM {ch_config['database']}.anomaly_blocks
-        ORDER BY anomaly_score DESC
-        LIMIT {limit}
-        """
+        # 从ClickHouse获取（支持时间过滤）
+        if hours:
+            query = f"""
+                SELECT
+                block_id,
+                anomaly_score,
+                detected_at,
+                E1, E2, E3, E4, E5, E6, E7, E8, E9, E10,
+                E11, E12, E13, E14, E15, E16, E17, E18, E19, E20,
+                E21, E22, E23, E24, E25, E26, E27, E28, E29
+                FROM {ch_config['database']}.anomaly_blocks
+                WHERE detected_at >= now() - INTERVAL {hours} HOUR
+                ORDER BY anomaly_score DESC
+                LIMIT {limit}
+            """
+        else:
+            query = f"""
+                SELECT
+                block_id,
+                anomaly_score,
+                detected_at,
+                E1, E2, E3, E4, E5, E6, E7, E8, E9, E10,
+                E11, E12, E13, E14, E15, E16, E17, E18, E19, E20,
+                E21, E22, E23, E24, E25, E26, E27, E28, E29
+                FROM {ch_config['database']}.anomaly_blocks
+                ORDER BY anomaly_score DESC
+                LIMIT {limit}
+            """
+
         df = client.query_df(query)
 
         if not df.empty:
@@ -560,11 +817,11 @@ async def get_realtime_anomalies(limit: int = 10):
             "source": "none",
             "anomalies": [],
             "event_distribution": event_distribution,
-            "message": "暂无实时异常数据"
+            "message": "暂无异常数据"
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取实时异常失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取异常失败: {str(e)}")
 
 
 # @app.post("/api/offline/process/{batch_id}")

@@ -37,7 +37,7 @@ def process_offline_batch(batch_id: str) -> str:
     script_path = get_abs_path("scripts/offline/predictor.py")
 
     if not os.path.exists(script_path):
-        return f"❌ 脚本不存在: {script_path}"
+        return f"[错误] 脚本不存在: {script_path}"
 
     try:
         # 设置环境变量传递batch_id
@@ -53,13 +53,13 @@ def process_offline_batch(batch_id: str) -> str:
         )
 
         if result.returncode == 0:
-            return f"✅ 批次 {batch_id} 处理完成！\n{result.stdout}"
+            return f"[成功] 批次 {batch_id} 处理完成！\n{result.stdout}"
         else:
-            return f"❌ 处理失败: {result.stderr}"
+            return f"[错误] 处理失败: {result.stderr}"
     except subprocess.TimeoutExpired:
-        return f"❌ 处理超时"
+        return f"[错误] 处理超时"
     except Exception as e:
-        return f"❌ 执行失败: {str(e)}"
+        return f"[错误] 执行失败: {str(e)}"
 
 
 @tool(description="查询所有离线批次列表")
@@ -90,9 +90,9 @@ def list_offline_batches() -> str:
     result = client.query_df(query)
 
     if result.empty:
-        return "⚠️ 暂无离线批次数据"
+        return "[警告] 暂无离线批次数据"
 
-    output = ["📋 ═══ 离线批次列表 ═══"]
+    output = ["[列表] ═══ 离线批次列表 ═══"]
     output.append("\n")
 
     total_blocks = 0
@@ -116,7 +116,7 @@ def list_offline_batches() -> str:
         output.append(f"│  └─ 状态: {status}")
 
     output.append("\n" + "─" * 40)
-    output.append(f"📊 统计: 共 **{len(result)}** 个批次 | **{total_blocks}** 个Block")
+    output.append(f"[统计] 统计: 共 **{len(result)}** 个批次 | **{total_blocks}** 个Block")
 
     return "\n".join(output)
 
@@ -152,7 +152,7 @@ def list_offline_anomalies(batch_id: str) -> str:
     """
     result = client.query_df(query)
     if result.empty:
-        return f"⚠️ 批次 {batch_id} 暂无异常数据"
+        return f"[警告] 批次 {batch_id} 暂无异常数据"
 
     # 去重：只保留每个block_id分数最高的记录
     result = result.drop_duplicates(subset=['block_id'], keep='first')
@@ -191,7 +191,7 @@ def list_offline_anomalies(batch_id: str) -> str:
     }
 
     output = [f"🎯 **批次 {batch_id} 异常分析报告**"]
-    output.append(f"📊 异常Block数量: **{len(result)}** 个\n")
+    output.append(f"[统计] 异常Block数量: **{len(result)}** 个\n")
     output.append("=" * 70)
 
     for idx, row in result.iterrows():
@@ -231,9 +231,9 @@ def check_model_readiness() -> str:
     matrix_path = os.path.join(HDFS_BASE_DIR, "File", "Event_occurrence_matrix.csv")
 
     status = []
-    status.append(f"模型文件: {'✅ 已存在' if os.path.exists(model_path) else '❌ 缺失'}")
-    status.append(f"标准化器: {'✅ 已存在' if os.path.exists(scaler_path) else '❌ 缺失'}")
-    status.append(f"特征矩阵: {'✅ 已存在' if os.path.exists(matrix_path) else '❌ 缺失'}")
+    status.append(f"模型文件: {'[成功] 已存在' if os.path.exists(model_path) else '[错误] 缺失'}")
+    status.append(f"标准化器: {'[成功] 已存在' if os.path.exists(scaler_path) else '[错误] 缺失'}")
+    status.append(f"特征矩阵: {'[成功] 已存在' if os.path.exists(matrix_path) else '[错误] 缺失'}")
 
     if all(os.path.exists(p) for p in [model_path, scaler_path, matrix_path]):
         return "\n".join(status) + "\n\n结论：所有组件已就绪，可以直接执行 detect_anomaly。"
@@ -307,13 +307,13 @@ def preprocess_hdfs_logs(log_file: str = None) -> str:
         result = prepare_training_data()
 
         # 检查是否成功
-        if "✅" in result:
-            return f"✅ 预处理成功（快速路径）！\n{result}\n\n现在可以调用 train_mlp_model 进行训练了。"
-        elif "❌" in result:
+        if "[成功]" in result:
+            return f"[成功] 预处理成功（快速路径）！\n{result}\n\n现在可以调用 train_mlp_model 进行训练了。"
+        elif "[错误]" in result:
             # 所有优先级都失败了，使用兜底方案
             pass
         else:
-            return f"✅ 预处理成功！\n{result}\n\n现在可以调用 train_mlp_model 进行训练了。"
+            return f"[成功] 预处理成功！\n{result}\n\n现在可以调用 train_mlp_model 进行训练了。"
     except Exception as e:
         print(f"data_preparator 调用失败，使用兜底方案: {e}")
 
@@ -330,11 +330,11 @@ def preprocess_hdfs_logs(log_file: str = None) -> str:
         preprocessor.load_templates(template_file)
         preprocessor.preprocess_log(log_file, matrix_file)
 
-        return f"✅ 预处理成功（兜底方案）！已生成特征矩阵文件：{matrix_file}。现在可以调用 train_mlp_model 进行训练了。"
+        return f"[成功] 预处理成功（兜底方案）！已生成特征矩阵文件：{matrix_file}。现在可以调用 train_mlp_model 进行训练了。"
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return f"❌ 预处理最终失败: {str(e)}"
+        return f"[错误] 预处理最终失败: {str(e)}"
 
 
 @tool(description="第二步：使用'Event_occurrence_matrix.csv'训练MLP模型。")
@@ -387,7 +387,7 @@ def detect_anomaly(threshold: float = 0.3) -> str:
     核心异常检测工具。
     使用 sklearn 的 MLPClassifier 模型 (block_anomaly_model.pkl)
 
-    ⚠️ 如果模型不存在，会自动训练！
+    [警告] 如果模型不存在，会自动训练！
     """
     print("[detect_anomaly] 开始执行异常检测...")
 
@@ -468,11 +468,11 @@ def start_realtime_service() -> str:
     split_log_script = os.path.join(hdfs_test_dir, "split_log.py")
 
     if not os.path.exists(predictor_script):
-        return f"❌ 找不到预测脚本: {predictor_script}"
+        return f"[错误] 找不到预测脚本: {predictor_script}"
     if not os.path.exists(redis_sync_script):
-        return f"❌ 找不到同步脚本: {redis_sync_script}"
+        return f"[错误] 找不到同步脚本: {redis_sync_script}"
     if not os.path.exists(split_log_script):
-        return f"❌ 找不到切分脚本: {split_log_script}"
+        return f"[错误] 找不到切分脚本: {split_log_script}"
 
     def is_script_running(script_name: str) -> list:
         """检查同名脚本是否已经在运行，返回运行中的进程列表"""
@@ -509,7 +509,7 @@ def start_realtime_service() -> str:
             )
             time.sleep(0.5)
             if proc1.poll() is not None:
-                return f"❌ predictor.py 启动后立即退出"
+                return f"[错误] predictor.py 启动后立即退出"
             new_started.append(f"predictor.py (pid={proc1.pid})")
             logging.info(f"启动predictor: pid={proc1.pid}")
 
@@ -526,7 +526,7 @@ def start_realtime_service() -> str:
             time.sleep(0.5)
             if proc2.poll() is not None:
                 _, stderr = proc2.communicate()
-                return f"❌ redis_sync.py 启动失败:\n{stderr.decode()}"
+                return f"[错误] redis_sync.py 启动失败:\n{stderr.decode()}"
             new_started.append(f"redis_sync.py (pid={proc2.pid})")
             logging.info(f"启动redis_sync: pid={proc2.pid}")
 
@@ -560,15 +560,15 @@ def start_realtime_service() -> str:
         if running_pids:
             status_parts.append(f"⏭️  已运行中（共{len(running_pids)}个）：\n  " + "\n  ".join(running_pids))
         if new_started:
-            status_parts.append(f"✅ 新启动（共{len(new_started)}个）：\n  " + "\n  ".join(new_started))
+            status_parts.append(f"[成功] 新启动（共{len(new_started)}个）：\n  " + "\n  ".join(new_started))
 
-        return f"""✅ 实时监控服务状态：
+        return f"""[成功] 实时监控服务状态：
 
 {chr(10).join(status_parts)}
 
 监控文件夹: {hdfs_test_dir}"""
     except Exception as e:
-        return f"❌ 启动失败: {str(e)}"
+        return f"[错误] 启动失败: {str(e)}"
 
 
 @tool(description="停止实时监控服务：先停止日志切分，再停止监控进程")
@@ -598,9 +598,9 @@ def stop_realtime_service() -> str:
             errors.append(str(e))
 
     if stopped:
-        return f"✅ 已停止实时监控服务！\n\n停止顺序：日志切分 → 监控服务\n停止的进程: {len(stopped)}个"
+        return f"[成功] 已停止实时监控服务！\n\n停止顺序：日志切分 → 监控服务\n停止的进程: {len(stopped)}个"
     else:
-        return "⚠️ 没有正在运行的实时监控服务"
+        return "[警告] 没有正在运行的实时监控服务"
   
   
 # ============================================================
@@ -618,7 +618,7 @@ def check_system_status() -> str:
     import yaml
 
     config_dir = get_abs_path("config")
-    status_list = ["📊 **系统组件状态检查**", ""]
+    status_list = ["[统计] **系统组件状态检查**", ""]
 
     # 检查 ClickHouse
     try:
@@ -634,11 +634,11 @@ def check_system_status() -> str:
             password=ch_config.get('password', '')
         )
         client.ping()
-        status_list.append(f"✅ ClickHouse: {ch_config['host']}:{ch_config.get('http_port', 8123)}")
+        status_list.append(f"[成功] ClickHouse: {ch_config['host']}:{ch_config.get('http_port', 8123)}")
     except ImportError:
-        status_list.append("⚠️ ClickHouse: 未安装 clickhouse_connect 模块")
+        status_list.append("[警告] ClickHouse: 未安装 clickhouse_connect 模块")
     except Exception as e:
-        status_list.append(f"❌ ClickHouse 连接失败: {str(e)}")
+        status_list.append(f"[错误] ClickHouse 连接失败: {str(e)}")
 
     # 检查 Redis
     try:
@@ -655,11 +655,11 @@ def check_system_status() -> str:
             decode_responses=True
         )
         r.ping()
-        status_list.append(f"✅ Redis: {redis_config['host']}:{redis_config['port']}")
+        status_list.append(f"[成功] Redis: {redis_config['host']}:{redis_config['port']}")
     except ImportError:
-        status_list.append("⚠️ Redis: 未安装 redis 模块")
+        status_list.append("[警告] Redis: 未安装 redis 模块")
     except Exception as e:
-        status_list.append(f"❌ Redis 连接失败: {str(e)}")
+        status_list.append(f"[错误] Redis 连接失败: {str(e)}")
 
     # 检查 Kafka
     try:
@@ -673,11 +673,11 @@ def check_system_status() -> str:
             group_id='status_check'
         )
         consumer.close()
-        status_list.append(f"✅ Kafka: {kafka_config['bootstrap_servers']}")
+        status_list.append(f"[成功] Kafka: {kafka_config['bootstrap_servers']}")
     except ImportError:
-        status_list.append("⚠️ Kafka: 未安装 kafka-python 模块")
+        status_list.append("[警告] Kafka: 未安装 kafka-python 模块")
     except Exception as e:
-        status_list.append(f"❌ Kafka 连接失败: {str(e)}")
+        status_list.append(f"[错误] Kafka 连接失败: {str(e)}")
 
     return "\n".join(status_list)
 
@@ -694,12 +694,12 @@ def view_system_config(confirm: bool = False) -> str:
     confirm: 必须为 True 才能查看配置（二次确认机制）
     """
     if not confirm:
-        return "⚠️ 查看配置需要确认！请回复 'confirm' 或设置 confirm=True"
+        return "[警告] 查看配置需要确认！请回复 'confirm' 或设置 confirm=True"
 
     import yaml
 
     config_dir = get_abs_path("config")
-    result = ["📋 **系统配置信息**", ""]
+    result = ["[列表] **系统配置信息**", ""]
 
     # ClickHouse 配置
     try:
@@ -712,7 +712,7 @@ def view_system_config(confirm: bool = False) -> str:
         result.append(f"- Database: online={ch_config['online']['database']}, offline={ch_config['offline']['database']}")
         result.append("")
     except Exception as e:
-        result.append(f"❌ 读取 ClickHouse 配置失败: {str(e)}")
+        result.append(f"[错误] 读取 ClickHouse 配置失败: {str(e)}")
         result.append("")
 
     # Redis 配置
@@ -726,7 +726,7 @@ def view_system_config(confirm: bool = False) -> str:
         result.append(f"- Key Prefix: {redis_config.get('key_prefix', 'anomaly:')}")
         result.append("")
     except Exception as e:
-        result.append(f"❌ 读取 Redis 配置失败: {str(e)}")
+        result.append(f"[错误] 读取 Redis 配置失败: {str(e)}")
         result.append("")
 
     # Kafka 配置
@@ -739,7 +739,7 @@ def view_system_config(confirm: bool = False) -> str:
         result.append(f"- Topics: online={kafka_config['topics']['online']}, offline={kafka_config['topics']['offline']}")
         result.append("")
     except Exception as e:
-        result.append(f"❌ 读取 Kafka 配置失败: {str(e)}")
+        result.append(f"[错误] 读取 Kafka 配置失败: {str(e)}")
         result.append("")
 
     return "\n".join(result)
@@ -754,7 +754,7 @@ def cleanup_redis_data(confirm: bool = False) -> str:
     confirm: 必须为 True 才能执行清理（二次确认机制）
     """
     if not confirm:
-        return "⚠️ 清理数据需要确认！请回复 'confirm' 或设置 confirm=True"
+        return "[警告] 清理数据需要确认！请回复 'confirm' 或设置 confirm=True"
 
     import yaml
     import redis
@@ -787,9 +787,9 @@ def cleanup_redis_data(confirm: bool = False) -> str:
         # 清理同步时间
         r.delete(key_prefix + redis_config['keys']['sync_time'])
 
-        return f"✅ Redis 数据清理完成！\n\n已清理：\n- Top 异常排序集\n- 异常详情 Hash ({len(detail_keys)} 个)\n- 同步时间"
+        return f"[成功] Redis 数据清理完成！\n\n已清理：\n- Top 异常排序集\n- 异常详情 Hash ({len(detail_keys)} 个)\n- 同步时间"
     except Exception as e:
-        return f"❌ Redis 数据清理失败: {str(e)}"
+        return f"[错误] Redis 数据清理失败: {str(e)}"
 
 
 @tool(description="查看服务运行状态（需要二次确认）")
@@ -801,7 +801,7 @@ def check_service_status(confirm: bool = False) -> str:
     confirm: 必须为 True 才能查看状态（二次确认机制）
     """
     if not confirm:
-        return "⚠️ 查看服务状态需要确认！请回复 'confirm' 或设置 confirm=True"
+        return "[警告] 查看服务状态需要确认！请回复 'confirm' 或设置 confirm=True"
 
     import psutil
 
@@ -821,9 +821,9 @@ def check_service_status(confirm: bool = False) -> str:
             pass
 
     if running_services:
-        return "✅ **运行中的服务**\n\n" + "\n".join(running_services)
+        return "[成功] **运行中的服务**\n\n" + "\n".join(running_services)
     else:
-        return "⚠️ 没有正在运行的监控服务"
+        return "[警告] 没有正在运行的监控服务"
 
 
 @tool(description="重启指定服务（需要二次确认）")
@@ -836,7 +836,7 @@ def restart_service(service_name: str, confirm: bool = False) -> str:
     confirm: 必须为 True 才能执行重启（二次确认机制）
     """
     if not confirm:
-        return f"⚠️ 重启 {service_name} 服务需要确认！请回复 'confirm' 或设置 confirm=True"
+        return f"[警告] 重启 {service_name} 服务需要确认！请回复 'confirm' 或设置 confirm=True"
 
     import subprocess
     import sys
@@ -853,7 +853,7 @@ def restart_service(service_name: str, confirm: bool = False) -> str:
     }
 
     if service_name not in service_map:
-        return f"❌ 未知的服务名称: {service_name}。可选: predictor, redis_sync, watch_folder, all"
+        return f"[错误] 未知的服务名称: {service_name}。可选: predictor, redis_sync, watch_folder, all"
 
     # 先停止相关服务
     target_scripts = []
@@ -890,14 +890,14 @@ def restart_service(service_name: str, confirm: bool = False) -> str:
 
     result = []
     if stopped:
-        result.append(f"✅ 已停止 {len(stopped)} 个进程")
+        result.append(f"[成功] 已停止 {len(stopped)} 个进程")
     if started:
-        result.append(f"✅ 已启动 {len(started)} 个服务")
+        result.append(f"[成功] 已启动 {len(started)} 个服务")
         result.append("")
         result.append("启动的服务:")
         result.extend(started)
 
-    return "\n".join(result) if result else "⚠️ 没有找到可操作的服务"
+    return "\n".join(result) if result else "[警告] 没有找到可操作的服务"
 
 
 # ============================================================
@@ -914,7 +914,7 @@ def delete_offline_batch(batch_id: str, confirm: bool = False) -> str:
     confirm: 必须为 True 才能执行删除（二次确认机制）
     """
     if not confirm:
-        return f"⚠️ 删除批次 {batch_id} 需要确认！请回复 'confirm' 或设置 confirm=True"
+        return f"[警告] 删除批次 {batch_id} 需要确认！请回复 'confirm' 或设置 confirm=True"
 
     import yaml
     import clickhouse_connect
@@ -941,8 +941,72 @@ def delete_offline_batch(batch_id: str, confirm: bool = False) -> str:
         ]
 
         for query in queries:
-            client.execute(query)
+            # 使用 command 方法执行 SQL 命令（HTTP 客户端）
+            client.command(query)
 
-        return f"✅ 批次 {batch_id} 数据已删除！"
+        return f"[成功] 批次 {batch_id} 数据已删除！"
     except Exception as e:
-        return f"❌ 删除失败: {str(e)}" 
+        return f"[错误] 删除失败: {str(e)}"
+
+
+@tool(description="删除所有离线批次数据（需要二次确认）")
+def delete_all_offline_batches(confirm: bool = False) -> str:
+    """
+    删除ClickHouse offline库中所有批次的数据
+
+    参数：
+    confirm: 必须为 True 才能执行删除（二次确认机制）
+    """
+    if not confirm:
+        return "[警告] 删除所有批次需要确认！请回复 'confirm' 或设置 confirm=True"
+
+    import yaml
+    import clickhouse_connect
+
+    config_dir = get_abs_path("config")
+
+    try:
+        ch_path = os.path.join(config_dir, 'clickhouse.yaml')
+        with open(ch_path, 'r', encoding='utf-8') as f:
+            ch_config = yaml.safe_load(f)['clickhouse']['offline']
+
+        client = clickhouse_connect.get_client(
+            host=ch_config['host'],
+            port=ch_config.get('http_port', 8123),
+            username=ch_config.get('username', 'default'),
+            password=ch_config.get('password', '')
+        )
+
+        # 先查询所有批次ID
+        query = "SELECT DISTINCT batch_id FROM offline.block_event_stats"
+        result = client.query_df(query)
+
+        if result.empty:
+            return "[警告] 没有找到任何离线批次数据"
+
+        batch_ids = result['batch_id'].tolist()
+        deleted_count = 0
+        errors = []
+
+        # 删除每个批次的数据
+        for batch_id in batch_ids:
+            try:
+                queries = [
+                    f"DELETE FROM offline.block_event_stats WHERE batch_id = {batch_id}",
+                    f"DELETE FROM offline.anomaly_blocks WHERE batch_id = {batch_id}",
+                    f"DELETE FROM offline.hdfs_logs WHERE batch_id = {batch_id}"
+                ]
+
+                for query in queries:
+                    client.command(query)
+
+                deleted_count += 1
+            except Exception as e:
+                errors.append(f"批次 {batch_id}: {str(e)}")
+
+        if errors:
+            return f"[成功] 成功删除 {deleted_count}/{len(batch_ids)} 个批次\n\n失败的批次:\n" + "\n".join(errors)
+        else:
+            return f"[成功] 成功删除所有 {deleted_count} 个离线批次数据！"
+    except Exception as e:
+        return f"[错误] 删除失败: {str(e)}" 
