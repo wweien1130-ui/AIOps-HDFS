@@ -237,6 +237,23 @@ async def chat(request: ChatRequest):
     return EventSourceResponse(generate())
 
 
+@app.post("/api/wechat/chat")
+async def wechat_chat(request: ChatRequest):
+    """
+    微信/OpenClaw 统一入口——将消息交给 LangGraph Supervisor 处理，返回纯文本回复。
+    OpenClaw AGENTS.md 只需配置这一个接口，Supervisor 内部自动路由到对应子 Agent。
+    """
+    agent = get_agent()
+    full_response = ""
+    for chunk in agent.execute_stream(request.message):
+        if chunk:
+            full_response += chunk
+
+    if not full_response:
+        return {"content": "抱歉，处理失败，请稍后重试。"}
+    return {"content": full_response.strip()}
+
+
 @app.post("/api/ocr", response_model=OCRResponse)
 async def ocr_image(file: UploadFile = File(...)):
     """
