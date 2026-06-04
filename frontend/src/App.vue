@@ -67,9 +67,39 @@
                 <el-avatar :size="36" src="https://cube.elemecdn.com/0/88/03b0d39583f48206768a7534e55bcpng.png" />
                 <span class="ai-title">AI安全专家</span>
                 <el-tag type="success" size="small">在线</el-tag>
+                <el-select v-model="modelMode" size="small" style="width: 100px; margin-left: 8px;">
+                  <el-option label="混合模式" value="auto" />
+                  <el-option label="纯本地" value="ollama" />
+                  <el-option label="纯云端" value="cloud" />
+                </el-select>
                 <el-button type="primary" size="small" @click="newChat" style="margin-left: auto;">
                   <el-icon><Plus /></el-icon> 新对话
                 </el-button>
+              </div>
+              <!-- 混合模式：展开两个子选择器 -->
+              <div v-if="modelMode === 'auto'" class="model-sub-row">
+                <span class="sub-label">本地:</span>
+                <el-select v-model="autoLocal" size="small" style="width: 140px;">
+                  <el-option v-for="m in localModels" :key="'L'+m.name" :label="m.name + (m.is_default ? ' ★' : '')" :value="m.name" />
+                </el-select>
+                <span class="sub-label" style="margin-left: 12px;">云端:</span>
+                <el-select v-model="autoCloud" size="small" style="width: 180px;">
+                  <el-option v-for="m in cloudModels" :key="'C'+m.name" :label="m.name + (m.is_default ? ' ★' : '')" :value="m.name" />
+                </el-select>
+              </div>
+              <!-- 纯本地：展开本地模型选择 -->
+              <div v-if="modelMode === 'ollama'" class="model-sub-row">
+                <span class="sub-label">本地模型:</span>
+                <el-select v-model="singleLocal" size="small" style="width: 180px;">
+                  <el-option v-for="m in localModels" :key="'SL'+m.name" :label="m.name + (m.is_default ? ' ★' : '')" :value="m.name" />
+                </el-select>
+              </div>
+              <!-- 纯云端：展开云端模型选择 -->
+              <div v-if="modelMode === 'cloud'" class="model-sub-row">
+                <span class="sub-label">云端模型:</span>
+                <el-select v-model="singleCloud" size="small" style="width: 220px;">
+                  <el-option v-for="m in cloudModels" :key="'SC'+m.name" :label="m.name + (m.is_default ? ' ★' : '')" :value="m.name" />
+                </el-select>
               </div>
             </template>
             <div class="chat-messages" ref="chatContainer">
@@ -226,6 +256,24 @@ const chatMessages = ref([
 ])
 const chatContainer = ref(null)
 const imageInput = ref(null)
+const modelMode = ref('auto')      // 'auto' | 'ollama' | 'cloud'
+const localModels = ref([])
+const cloudModels = ref([])
+const autoLocal = ref('')          // 混合模式 - 本地模型
+const autoCloud = ref('')          // 混合模式 - 云端模型
+const singleLocal = ref('')        // 纯本地 - 选中的模型
+const singleCloud = ref('')        // 纯云端 - 选中的模型
+
+// 计算最终发送给后端的 model 值
+const resolvedModel = computed(() => {
+  if (modelMode.value === 'auto') {
+    return `auto|${autoLocal.value}|${autoCloud.value}`
+  } else if (modelMode.value === 'ollama') {
+    return singleLocal.value
+  } else {
+    return singleCloud.value
+  }
+})
 const gaugeChartRef = ref(null)
 const pieChartRef = ref(null)
 let gaugeChart = null
@@ -961,6 +1009,28 @@ function formatTimeDisplay(seconds) {
   }
 }
 
+function applyModelSwitch(modelValue) {
+  // 解析模型切换值并更新前端选择器状态
+  if (modelValue.startsWith('auto|')) {
+    const parts = modelValue.split('|')
+    if (parts.length === 3) {
+      modelMode.value = 'auto'
+      autoLocal.value = parts[1]
+      autoCloud.value = parts[2]
+    }
+  } else {
+    // 单模型：判断是本地还是云端
+    const isLocal = localModels.value.some(m => m.name === modelValue)
+    if (isLocal) {
+      modelMode.value = 'ollama'
+      singleLocal.value = modelValue
+    } else {
+      modelMode.value = 'cloud'
+      singleCloud.value = modelValue
+    }
+  }
+}
+
 async function sendMessage() {
   if (!userInput.value.trim() || isTyping.value) return
 
@@ -985,10 +1055,11 @@ async function sendMessage() {
   }
 
   try {
+    console.log('[ModelSwitch] Sending:', { message: userMessage, model: resolvedModel.value, mode: modelMode.value })
     const response = await fetch(`${API_BASE}/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: userMessage })
+      body: JSON.stringify({ message: userMessage, model: resolvedModel.value })
     })
 
     const reader = response.body.getReader()
@@ -1016,6 +1087,15 @@ async function sendMessage() {
             }
 
             if (data.content) {
+              // 检测模型切换指令
+              try {
+                const inner = JSON.parse(data.content)
+                if (inner.event === 'model_switch' && inner.model) {
+                  applyModelSwitch(inner.model)
+                  continue
+                }
+              } catch (_) {}
+
               const lastMsg = chatMessages.value[chatMessages.value.length - 1]
               if (lastMsg && lastMsg.role === 'assistant') {
                 lastMsg.content += data.content
@@ -1304,7 +1384,25 @@ onMounted(() => {
     }
     refreshData()
   })
+  // 获取可用模型列表
+  fetchModels()
 })
+
+async function fetchModels() {
+  try {
+    const res = await fetch(`${API_BASE}/models`)
+    const data = await res.json()
+    localModels.value = data.local || []
+    cloudModels.value = data.cloud || []
+    // 设置默认值
+    autoLocal.value = data.defaults?.local || ''
+    autoCloud.value = data.defaults?.cloud || ''
+    singleLocal.value = data.defaults?.local || ''
+    singleCloud.value = data.defaults?.cloud || ''
+  } catch (e) {
+    console.warn('获取模型列表失败:', e)
+  }
+}
 
 function updateCharts() {
   const healthPercent = ((1 - analyzeData.value.anomaly_ratio) * 100).toFixed(1)
@@ -1453,6 +1551,20 @@ function updateCharts() {
   gap: 10px;
   color: #fff;
   font-size: 16px;
+}
+
+.model-sub-row {
+  display: flex;
+  align-items: center;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255,255,255,0.15);
+}
+
+.sub-label {
+  color: rgba(255,255,255,0.7);
+  font-size: 12px;
+  margin-right: 4px;
 }
 
 .ai-title {

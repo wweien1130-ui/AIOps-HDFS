@@ -1009,4 +1009,96 @@ def delete_all_offline_batches(confirm: bool = False) -> str:
         else:
             return f"[成功] 成功删除所有 {deleted_count} 个离线批次数据！"
     except Exception as e:
-        return f"[错误] 删除失败: {str(e)}" 
+        return f"[错误] 删除失败: {str(e)}"
+
+
+# ============================================================
+# 模型管理工具
+# ============================================================
+
+@tool(description="查看当前可用的所有本地模型和云端模型列表")
+def list_available_models() -> str:
+    """查看系统中所有可用的 LLM 模型，包括本地 Ollama 模型和云端 DashScope 模型。"""
+    from model.registry import registry
+    models = registry.list_models()
+    defaults = models.get("defaults", {})
+
+    lines = ["[列表] **可用模型列表**", ""]
+
+    lines.append("### 本地模型 (Ollama)")
+    for m in models.get("local", []):
+        tag = " ★当前默认" if m["is_default"] else ""
+        lines.append(f"- {m['name']}{tag}")
+    lines.append("")
+
+    lines.append("### 云端模型 (DashScope)")
+    for m in models.get("cloud", []):
+        tag = " ★当前默认" if m["is_default"] else ""
+        lines.append(f"- {m['name']}{tag}")
+    lines.append("")
+
+    lines.append(f"当前混合模式默认: 本地={defaults.get('local', '?')} + 云端={defaults.get('cloud', '?')}")
+
+    return "\n".join(lines)
+
+
+@tool(description="切换LLM模型（需要二次确认）。mode可选: ollama(纯本地), cloud(纯云端), auto(混合模式). model_name为具体模型名。")
+def switch_model(mode: str, model_name: str = "", cloud_model: str = "", confirm: bool = False) -> str:
+    """
+    切换系统使用的 LLM 模型。
+
+    参数：
+    - mode: "ollama"(纯本地), "cloud"(纯云端), "auto"(混合模式)
+    - model_name: 纯本地或纯云端模式下选择的具体模型名
+    - cloud_model: 混合模式下选择的云端模型名（与 model_name 搭配）
+    - confirm: 必须为 True 才能执行切换（二次确认机制）
+    """
+    from model.registry import registry
+
+    models = registry.list_models()
+    local_names = [m["name"] for m in models.get("local", [])]
+    cloud_names = [m["name"] for m in models.get("cloud", [])]
+
+    # 验证参数
+    if mode not in ("ollama", "cloud", "auto"):
+        return f"[错误] 无效的模式: {mode}。可选: ollama, cloud, auto"
+
+    if mode == "auto":
+        if not model_name or not cloud_model:
+            defaults = models.get("defaults", {})
+            model_name = model_name or defaults.get("local", "")
+            cloud_model = cloud_model or defaults.get("cloud", "")
+        if model_name not in local_names:
+            return f"[错误] 本地模型 '{model_name}' 不存在。可用: {', '.join(local_names)}"
+        if cloud_model not in cloud_names:
+            return f"[错误] 云端模型 '{cloud_model}' 不存在。可用: {', '.join(cloud_names)}"
+        target = f"混合模式 (本地: {model_name} + 云端: {cloud_model})"
+        switch_value = f"auto|{model_name}|{cloud_model}"
+    elif mode == "ollama":
+        if not model_name:
+            return f"[错误] 请指定本地模型名。可用: {', '.join(local_names)}"
+        if model_name not in local_names:
+            return f"[错误] 本地模型 '{model_name}' 不存在。可用: {', '.join(local_names)}"
+        target = f"纯本地: {model_name}"
+        switch_value = model_name
+    else:
+        if not model_name:
+            return f"[错误] 请指定云端模型名。可用: {', '.join(cloud_names)}"
+        if model_name not in cloud_names:
+            return f"[错误] 云端模型 '{model_name}' 不存在。可用: {', '.join(cloud_names)}"
+        target = f"纯云端: {model_name}"
+        switch_value = model_name
+
+    if not confirm:
+        return f"[确认] 即将切换为 {target}。\n\n请回复「确认」执行切换，或回复其他内容取消。"
+
+    # 持久化到 ReactAgent 实例（跨请求生效）
+    try:
+        from api.main import get_agent
+        agent = get_agent()
+        agent._persisted_model_mode = switch_value
+    except Exception:
+        pass
+
+    # 返回结构化指令，前端解析后更新下拉框
+    return f"[MODEL_SWITCH:{switch_value}][成功] 模型已切换为 {target}。后续请求将使用新模型。"

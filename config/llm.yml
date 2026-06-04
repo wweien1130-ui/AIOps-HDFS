@@ -12,12 +12,13 @@ ollama:
 
   # 可用模型列表
   models:
-    default: "llama3"
+    default: "qwen3:8b"
     options:
-      - "llama3"
-      - "mistral"
-      - "qwen"
-      - "codellama"
+      - "qwen3:8b"
+      - "qwen3-vl:4b"
+      - "deepseek-r1:7b"
+      - "gemma3:4b"
+      - "qwen3-vl:8b"
 
   # 生成参数
   generation:
@@ -60,6 +61,18 @@ deepseek:
 qwen:
   # API端点
   base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+  # 可用云端模型列表
+  models:
+    default: "qwen3.7-max-2026-05-20"
+    options:
+      - "qwen3.7-max-2026-05-20"
+      - "qwen3.6-max-preview"
+      - "qwen3.7-max"
+      - "qwen3.7-max-2026-05-17"
+      - "qwen3.6-plus-2026-04-02"
+      - "qwen3.7-plus"
+      - "qwen-turbo"
 
 
 # 本地模型配置（可选）

@@ -19,7 +19,7 @@ from langgraph.types import Command
 from langchain.agents import create_agent
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
-from model.factory import chat_models
+from model.factory import chat_models, ollama_model
 from agent.tools.agent_tools import (
     rag_retrieve, get_current_time, calculate,
     preprocess_hdfs_logs, train_mlp_model, detect_anomaly, check_model_readiness,
@@ -28,6 +28,8 @@ from agent.tools.agent_tools import (
     # 运维工具
     check_system_status, view_system_config, cleanup_redis_data,
     check_service_status, restart_service, delete_offline_batch, delete_all_offline_batches,
+    # 模型管理工具
+    list_available_models, switch_model,
 )
 from utils.prompt_loader import (
     load_system_prompts,    #系统提示词
@@ -37,6 +39,33 @@ from utils.prompt_loader import (
     load_ops_prompt,         #运维处理器
 )
 from utils.logger_handler import logger
+from utils.config_handler import llm_config
+
+
+def _clean_messages_for_cloud(messages: list) -> list:
+    """过滤消息，移除 tool 消息和 tool_calls，适配 DashScope API"""
+    cleaned = []
+    for msg in messages:
+        if isinstance(msg, dict):
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+        else:
+            role = getattr(msg, "type", "")
+            content = getattr(msg, "content", "")
+
+        # 跳过 tool 消息和空的 ai 消息
+        if role == "tool":
+            continue
+        if role in ("ai", "assistant") and not content:
+            continue
+
+        # 构造干净的消息
+        if role in ("user", "human"):
+            cleaned.append(HumanMessage(content=content))
+        elif role in ("ai", "assistant"):
+            cleaned.append(AIMessage(content=content))
+
+    return cleaned
 
 
 # ============================================================
@@ -70,6 +99,14 @@ class ReactAgent:
             "pending_operation": "",
             "pending_params": {}
         }
+
+        # 当前模型模式（由 execute_stream 设置）
+        self._current_model_mode = "auto"
+        # 持久化模型模式（通过对话切换后保存，跨请求生效）
+        self._persisted_model_mode = ""
+        # 子Agent 默认模型引用（用于 dynamic swap）
+        self._default_ollama = ollama_model
+        self._default_cloud = chat_models
 
         # --- 加载提示词 ---
         diagnosis_prompt = load_diagnosis_prompt()
@@ -123,7 +160,7 @@ class ReactAgent:
 
         logger.info("[ReactAgent] 构建 General 子Agent...")
         self.general_agent = create_agent(
-            model=chat_models,
+            model=ollama_model,
             system_prompt="""你是一个专业的HDFS智能助手的中枢调度员。
 
                             你的职责：
@@ -132,12 +169,15 @@ class ReactAgent:
                             "我是HDFS智能诊断系统，集成了异常检测、知识检索、实时监控等功能。
                                 如果需要检测异常或查询知识，请直接告诉我您的需求。"
                             3. 如果用户的问题涉及HDFS，主动引导到对应功能
+                            4. 处理模型管理请求（查看/切换模型）
 
                             可用工具：
                             - get_current_time: 获取当前时间
                             - calculate: 数学计算
+                            - list_available_models: 查看所有可用的本地和云端模型
+                            - switch_model: 切换模型（需要二次确认）
                             """,
-            tools=[get_current_time, calculate],
+            tools=[get_current_time, calculate, list_available_models, switch_model],
         )
 
         logger.info("[ReactAgent] 构建 Ops 子Agent...")
@@ -170,6 +210,52 @@ class ReactAgent:
         logger.info("[ReactAgent] 多智能体系统初始化完成")
 
     # ============================================================
+    # 模型解析
+    # ============================================================
+
+    def _resolve_model(self, agent_type: str = "default"):
+        """根据当前 model_mode 和 agent 类型返回对应的模型实例。
+
+        agent_type: "supervisor" | "simple" | "complex"
+          - supervisor/simple: auto 模式下用本地模型
+          - complex: auto 模式下用云端模型
+
+        model_mode 格式:
+          - "auto"                  → 使用默认本地 + 默认云端
+          - "auto:qwen3:8b:qwen-max" → 指定本地 + 云端
+          - "ollama"                → 全部用默认本地
+          - "cloud"                 → 全部用默认云端
+          - "qwen3.5:9b"            → 全部用指定模型
+        """
+        from model.registry import registry
+        mode = self._current_model_mode
+        logger.info(f"[ModelSwitch] _resolve_model called: mode={mode!r} agent_type={agent_type}")
+
+        if mode.startswith("auto"):
+            # 格式: "auto|qwen3:8b|qwen3.6-plus"（用 | 分隔，避免模型名中的 : 冲突）
+            parts = mode.split("|")
+            logger.info(f"[ModelSwitch] auto parts={parts}")
+            if len(parts) == 3:
+                local_name, cloud_name = parts[1], parts[2]
+            else:
+                local_name = llm_config.get("ollama", {}).get("models", {}).get("default", "qwen3:8b")
+                cloud_name = llm_config.get("qwen", {}).get("models", {}).get("default", "")
+            chosen = local_name if agent_type in ("supervisor", "simple") else cloud_name
+            logger.info(f"[ModelSwitch] mode=auto agent={agent_type} → {chosen}")
+            if agent_type in ("supervisor", "simple"):
+                return registry.get_model(local_name)
+            return registry.get_model(cloud_name)
+        elif mode == "ollama":
+            logger.info(f"[ModelSwitch] mode=ollama agent={agent_type} → ollama default")
+            return registry.get_ollama_model()
+        elif mode == "cloud":
+            logger.info(f"[ModelSwitch] mode=cloud agent={agent_type} → cloud default")
+            return registry.get_cloud_model()
+        else:
+            logger.info(f"[ModelSwitch] mode=single agent={agent_type} → {mode}")
+            return registry.get_model(mode)
+
+    # ============================================================
     # 图构建
     # ============================================================
 
@@ -178,10 +264,10 @@ class ReactAgent:
 
         # 注册所有节点
         builder.add_node("supervisor",       self._supervisor_node)
-        builder.add_node("diagnosis_agent",  self._make_agent_node(self.diagnosis_agent, "Diagnosis"))
-        builder.add_node("data_agent",       self._make_agent_node(self.data_agent, "Data"))
+        builder.add_node("diagnosis_agent",  self._make_agent_node(self.diagnosis_agent, "Diagnosis", "complex"))
+        builder.add_node("data_agent",       self._make_agent_node(self.data_agent, "Data", "complex"))
         builder.add_node("monitor_agent",    self._monitor_node)
-        builder.add_node("general_agent",    self._make_agent_node(self.general_agent, "General"))
+        builder.add_node("general_agent",    self._make_agent_node(self.general_agent, "General", "simple"))
         builder.add_node("ops_agent",        self._ops_agent_node)
         builder.add_node("result_validator", self._validate_result)
         builder.add_node("error_handler",    self._handle_error)
@@ -287,7 +373,8 @@ class ReactAgent:
         logger.info(f"[Supervisor] 分析意图: {last_user_content[:60]}...")
 
         try:
-            response = chat_models.invoke([
+            sup_model = self._resolve_model("supervisor")
+            response = sup_model.invoke([
                 SystemMessage(content=load_supervisor_prompt()),
                 HumanMessage(content=last_user_content),
             ])
@@ -321,16 +408,19 @@ class ReactAgent:
             "MONITOR":   "monitor",
             "GENERAL":   "general",
             "OPS":       "ops",
+            "MODEL":     "model",
         }
         intent = intent_map.get(raw, "")
         if intent:
             return intent, confidence
 
-        # 回退：关键词匹配
+        # 回退：关键词匹配（顺序重要，更具体的放前面）
         t = text.lower()
+        if any(kw in t for kw in ["切换模型", "模型切换", "模型管理", "查看模型", "可用模型", "当前模型", "模型列表", "本地模型", "云端模型"]):
+            return "model", 0.7
         if any(kw in t for kw in ["diagnosis", "诊断", "检测", "异常", "错误", "blk_"]):
             return "diagnosis", 0.6
-        if any(kw in t for kw in ["data", "数据", "训练", "预处理", "模型", "批次", "batch"]):
+        if any(kw in t for kw in ["data", "数据", "训练", "预处理", "批次", "batch"]):
             return "data", 0.6
         if any(kw in t for kw in ["monitor", "监控", "实时", "在线", "启动服务", "停止服务"]):
             return "monitor", 0.6
@@ -356,6 +446,7 @@ class ReactAgent:
             "monitor":   "monitor_agent",
             "general":   "general_agent",
             "ops":       "ops_agent",
+            "model":     "general_agent",  # 模型管理由 General Agent 处理
         }
         target = route_map.get(intent, "fallback")
         logger.info(f"[Router] {intent} → {target}")
@@ -365,14 +456,23 @@ class ReactAgent:
     # 子Agent 节点工厂 —— 用闭包为每个子Agent创建节点函数
     # ============================================================
 
-    @staticmethod
-    def _make_agent_node(agent, name: str):
-        """返回一个 LangGraph 节点函数，内部调用子Agent并返回增量消息。"""
+    def _make_agent_node(self, agent, name: str, agent_type: str = "complex"):
+        """返回一个 LangGraph 节点函数，内部调用子Agent并返回增量消息。
+        agent_type: "simple" | "complex" — 用于动态模型选择。"""
         def node_fn(state: SupervisorState) -> dict:
             logger.info(f"[{name}Agent] 开始执行...")
             try:
-                result = agent.invoke({"messages": state["messages"]})
-                existing_count = len(state["messages"])
+                # 动态替换模型
+                resolved = self._resolve_model(agent_type)
+                agent.model = resolved
+                # 云端模型需要过滤 tool 消息，本地模型不需要
+                from langchain_community.chat_models import ChatTongyi
+                if isinstance(resolved, ChatTongyi):
+                    msgs = _clean_messages_for_cloud(state["messages"])
+                else:
+                    msgs = state["messages"]
+                result = agent.invoke({"messages": msgs})
+                existing_count = len(msgs)
                 all_msgs = result.get("messages", [])
                 new_msgs = all_msgs[existing_count:]
                 logger.info(f"[{name}Agent] 完成，新增 {len(new_msgs)} 条消息")
@@ -418,6 +518,11 @@ class ReactAgent:
 
     def _ops_agent_node(self, state: SupervisorState) -> dict:
         """处理运维操作，支持二次确认机制"""
+        # 动态替换模型
+        resolved = self._resolve_model("complex")
+        self.ops_agent.model = resolved
+        from langchain_community.chat_models import ChatTongyi
+        _is_cloud = isinstance(resolved, ChatTongyi)
         # 获取最新的用户消息
         last_content = ""
         for msg in reversed(state["messages"]):
@@ -466,8 +571,9 @@ class ReactAgent:
                     break
 
             try:
-                result = self.ops_agent.invoke({"messages": messages})
-                existing_count = len(messages)
+                clean_msgs = _clean_messages_for_cloud(messages) if _is_cloud else messages
+                result = self.ops_agent.invoke({"messages": clean_msgs})
+                existing_count = len(clean_msgs)
                 all_msgs = result.get("messages", [])
                 new_msgs = all_msgs[existing_count:]
 
@@ -487,8 +593,9 @@ class ReactAgent:
 
         # 正常处理运维请求
         try:
-            result = self.ops_agent.invoke({"messages": state["messages"]})
-            existing_count = len(state["messages"])
+            clean_msgs = _clean_messages_for_cloud(state["messages"]) if _is_cloud else state["messages"]
+            result = self.ops_agent.invoke({"messages": clean_msgs})
+            existing_count = len(clean_msgs)
             all_msgs = result.get("messages", [])
             new_msgs = all_msgs[existing_count:]
 
@@ -632,8 +739,16 @@ class ReactAgent:
     # 流式执行 —— 接口完全兼容 app.py
     # ============================================================
 
-    def execute_stream(self, query: str):
-        logger.info(f"[execute_stream] 开始处理: {query}")
+    def execute_stream(self, query: str, model_mode: str = "auto"):
+        # 前端发送的 model_mode 只有在明确选择了具体模型时才覆盖持久化
+        # "auto:local:cloud" 格式 = 前端明确选择了模型组合，应覆盖持久化
+        if model_mode != "auto" and self._persisted_model_mode:
+            logger.info(f"[execute_stream] 前端覆盖持久化: {self._persisted_model_mode} → {model_mode}")
+            self._persisted_model_mode = ""
+        # 优先使用持久化的模型模式（通过对话切换设置）
+        effective_mode = self._persisted_model_mode if self._persisted_model_mode else model_mode
+        logger.info(f"[execute_stream] 开始处理: {query} (model_mode={effective_mode}, persisted={'yes' if self._persisted_model_mode else 'no'})")
+        self._current_model_mode = effective_mode
 
         # 合并之前的对话状态
         messages = self.conversation_state["messages"].copy()
@@ -678,11 +793,28 @@ class ReactAgent:
                         tool_name = getattr(msg, "name", "tool")
 
                     if msg_type == "ai" and msg_content:
-                        yield msg_content.strip()
+                        text = msg_content.strip()
+                        # 检测模型切换指令
+                        switch_match = re.search(r'\[MODEL_SWITCH:(.+?)\]', text)
+                        if switch_match:
+                            switch_value = switch_match.group(1)
+                            # 输出结构化事件（前端解析）
+                            yield json.dumps({"event": "model_switch", "model": switch_value})
+                            # 输出纯文本（去掉标记）
+                            text = re.sub(r'\[MODEL_SWITCH:.+?\]', '', text).strip()
+                        if text:
+                            yield text
                     elif msg_type == "tool":
-                        if msg_content:
-                            yield str(msg_content)
-                        else:
+                        content_str = str(msg_content) if msg_content else ""
+                        # 工具输出也可能包含切换指令
+                        switch_match = re.search(r'\[MODEL_SWITCH:(.+?)\]', content_str)
+                        if switch_match:
+                            switch_value = switch_match.group(1)
+                            yield json.dumps({"event": "model_switch", "model": switch_value})
+                            content_str = re.sub(r'\[MODEL_SWITCH:.+?\]', '', content_str).strip()
+                        if content_str:
+                            yield content_str
+                        elif not switch_match:
                             yield f"\n[{tool_name} 执行完成]\n"
 
                 yielded_count = len(messages)

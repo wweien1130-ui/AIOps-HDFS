@@ -13,9 +13,8 @@ vector_store:
   # 集合名称
   collection_name: "hdfs_knowledge"
 
-  #聊天模型
-  # chat_model : "qwen-turbo"
-  chat_model : "qwen3.7-max"
+  #聊天模型已移至 config/llm.yml → qwen.models.default
+  # chat_model : "qwen3.7-max-2026-05-17"
 
   # 嵌入模型
   embedding:

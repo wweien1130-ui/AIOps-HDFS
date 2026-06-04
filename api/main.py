@@ -96,6 +96,7 @@ class AnalyzeResponse(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
+    model: str = "auto"  # "auto" | "ollama" | "cloud" | 具体模型名
 
 
 class OCRResponse(BaseModel):
@@ -113,6 +114,12 @@ class OCRResponse(BaseModel):
 @app.get("/api/health")
 async def health_check():
     return {"status": "healthy"}
+
+
+@app.get("/api/models")
+async def list_models():
+    from model.registry import registry
+    return registry.list_models()
 
 
 @app.post("/api/analyze", response_model=AnalyzeResponse)
@@ -227,7 +234,8 @@ async def chat(request: ChatRequest):
     async def generate():
         try:
             agent = get_agent()  # 使用单例，保持对话记忆
-            for chunk in agent.execute_stream(request.message):
+            print(f"[API] /api/chat received model={request.model!r}")
+            for chunk in agent.execute_stream(request.message, model_mode=request.model):
                 if chunk:
                     yield {"event": "message", "data": json.dumps({"content": chunk})}
             yield {"event": "done", "data": json.dumps({"status": "complete"})}
@@ -245,7 +253,7 @@ async def wechat_chat(request: ChatRequest):
     """
     agent = get_agent()
     full_response = ""
-    for chunk in agent.execute_stream(request.message):
+    for chunk in agent.execute_stream(request.message, model_mode=request.model):
         if chunk:
             full_response += chunk
 
