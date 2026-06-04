@@ -13,6 +13,7 @@ from typing import Optional, List, Dict, Any
 
 from utils.path_tool import get_abs_path
 from agent.react_agent import ReactAgent
+from api.routers.openclaw_chat import router as openclaw_router
 
 
 HDFS_BASE_DIR = get_abs_path("BackUp/Preprocess_File")
@@ -26,6 +27,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 注册 OpenClaw 路由
+app.include_router(openclaw_router)
 
 # Agent 单例（保持对话记忆）
 _agent_instance = None
