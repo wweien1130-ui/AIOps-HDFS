@@ -248,18 +248,44 @@ async def chat(request: ChatRequest):
 @app.post("/api/wechat/chat")
 async def wechat_chat(request: ChatRequest):
     """
-    微信/OpenClaw 统一入口——将消息交给 LangGraph Supervisor 处理，返回纯文本回复。
+    微信/OpenClaw 统一入口——每次请求重置对话历史，避免上下文污染。
     OpenClaw AGENTS.md 只需配置这一个接口，Supervisor 内部自动路由到对应子 Agent。
     """
-    agent = get_agent()
-    full_response = ""
-    for chunk in agent.execute_stream(request.message, model_mode=request.model):
-        if chunk:
-            full_response += chunk
+    import asyncio
 
-    if not full_response:
-        return {"content": "抱歉，处理失败，请稍后重试。"}
-    return {"content": full_response.strip()}
+    WECHAT_TIMEOUT = 60  # 60秒超时
+
+    def run_agent():
+        agent = get_agent()
+        # 重置对话历史，微信每次请求都是独立的
+        agent.conversation_state = {
+            "messages": [],
+            "pending_operation": "",
+            "pending_params": {}
+        }
+        full_response = ""
+        for chunk in agent.execute_stream(request.message, model_mode=request.model):
+            if chunk:
+                full_response += chunk
+        return full_response
+
+    try:
+        loop = asyncio.get_event_loop()
+        full_response = await asyncio.wait_for(
+            loop.run_in_executor(None, run_agent),
+            timeout=WECHAT_TIMEOUT
+        )
+
+        if not full_response:
+            return {"content": "抱歉，处理失败，请稍后重试。"}
+        return {"content": full_response.strip()}
+
+    except asyncio.TimeoutError:
+        print(f"[wechat_chat] 超时！请求: {request.message}")
+        return {"content": "抱歉，处理超时（超过60秒），请稍后重试或简化您的问题。"}
+    except Exception as e:
+        print(f"[wechat_chat] 错误: {str(e)}")
+        return {"content": f"抱歉，处理出错: {str(e)}"}
 
 
 @app.post("/api/ocr", response_model=OCRResponse)

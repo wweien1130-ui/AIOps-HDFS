@@ -370,6 +370,12 @@ class ReactAgent:
             logger.info(f"[Supervisor] 确认词但无待确认操作，当作通用问题")
             return {"intent": "general", "confidence": 0.8, "next_agent_override": ""}
 
+        # ===== Python 关键词预分类（快速、准确，避免 LLM 误判）=====
+        fast_intent = self._fast_classify(last_user_content)
+        if fast_intent:
+            logger.info(f"[Supervisor] 关键词快速分类: {fast_intent}")
+            return {"intent": fast_intent, "confidence": 1.0, "next_agent_override": ""}
+
         logger.info(f"[Supervisor] 分析意图: {last_user_content[:60]}...")
 
         try:
@@ -385,6 +391,40 @@ class ReactAgent:
 
         logger.info(f"[Supervisor] 意图={intent}  置信度={confidence:.2f}")
         return {"intent": intent, "confidence": confidence, "next_agent_override": ""}
+
+    @staticmethod
+    def _fast_classify(text: str) -> str:
+        """Python 关键词快速分类——在 LLM 之前执行，处理明确的意图。
+        返回空字符串表示无法快速分类，需要走 LLM。"""
+        t = text.strip()
+
+        # MONITOR: 开启/关闭/启动/停止 + 在线/实时/监控/模式
+        monitor_patterns = [
+            "开启在线", "关闭在线", "启动在线", "停止在线",
+            "开启实时", "关闭实时", "启动实时", "停止实时",
+            "开启监控", "关闭监控", "启动监控", "停止监控",
+            "在线模式", "实时模式", "监控模式",
+            "在线检测", "实时监控",
+        ]
+        if any(p in t for p in monitor_patterns):
+            return "monitor"
+
+        # MODEL: 切换模型、模型相关
+        model_patterns = [
+            "切换模型", "模型切换", "模型管理", "查看模型",
+            "可用模型", "当前模型", "模型列表", "本地模型",
+            "云端模型", "混合模式",
+        ]
+        if any(p in t for p in model_patterns):
+            return "model"
+
+        # OPS: 系统状态、配置、清理等（排除在线/实时/监控相关）
+        ops_patterns = ["系统状态", "查看配置", "清理数据", "清理redis"]
+        if any(p in t for p in ops_patterns):
+            return "ops"
+
+        # 无法快速分类，交给 LLM
+        return ""
 
     @staticmethod
     def _parse_intent(text: str) -> tuple:
@@ -657,7 +697,8 @@ class ReactAgent:
         if not messages:
             return {"error_type": ""}
 
-        # 检查所有消息（不止最后一条），因为 LLM 可能把错误信息包装在前面的 tool 消息里
+        # 只检查最后一条 AI 消息（最终结果），忽略中间的工具调用消息
+        # 避免工具调用过程中的临时错误（如 Connection refused）被误判为最终失败
         ERROR_PATTERNS = [
             ("找不到矩阵文件",    "data_not_ready"),
             ("矩阵文件不存在",    "data_not_ready"),
@@ -667,24 +708,27 @@ class ReactAgent:
             ("模型缺失",          "model_not_ready"),
             ("文件缺失",          "data_not_ready"),
             ("组件不全",          "data_not_ready"),
-            ("Connection refused", "connection_failed"),
-            ("连接失败",          "connection_failed"),
-            ("timeout",           "timeout"),
-            ("超时",              "timeout"),
-            ("FileNotFoundError", "file_missing"),
         ]
 
-        # 从后往前扫最近 10 条消息，避免漏掉
-        for msg in reversed(messages[-10:]):
+        # 找到最后一条 AI 类型的消息
+        last_ai_content = ""
+        for msg in reversed(messages):
+            msg_type = ""
             content = ""
             if isinstance(msg, dict):
+                msg_type = msg.get("type", "")
                 content = msg.get("content", "")
             else:
+                msg_type = getattr(msg, "type", "")
                 content = getattr(msg, "content", "") or ""
-            content_str = str(content)
 
+            if msg_type == "ai" and content:
+                last_ai_content = str(content)
+                break
+
+        if last_ai_content:
             for pattern, err_type in ERROR_PATTERNS:
-                if pattern.lower() in content_str.lower():
+                if pattern.lower() in last_ai_content.lower():
                     logger.warning(f"[Validator] 检测到错误 → {err_type}  (匹配: {pattern})")
                     return {"error_type": err_type}
 
