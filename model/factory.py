@@ -2,7 +2,7 @@ from abc import abstractmethod, ABC
 from typing import Optional
 
 from langchain_community.chat_models import ChatTongyi
-from langchain_community.embeddings import DashScopeEmbeddings
+from langchain_ollama import OllamaEmbeddings
 from langchain_core.embeddings import Embeddings
 from langchain_core.language_models import BaseChatModel
 from utils.config_handler import rag_config, llm_config
@@ -40,7 +40,10 @@ class ChatModelFactory(BaseModelFactory):
 
 class EmbeddingsFactory(BaseModelFactory):
     def generator(self) -> Optional[Embeddings | BaseChatModel]:
-        return DashScopeEmbeddings(model=rag_config["vector_store"]["embedding"]["model"])
+        return OllamaEmbeddings(
+            model=rag_config["vector_store"]["embedding"]["model"],
+            base_url=llm_config["ollama"]["base_url"],
+        )
 
 
 # 云端模型（复杂任务）

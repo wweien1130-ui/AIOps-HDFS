@@ -18,8 +18,8 @@ vector_store:
 
   # 嵌入模型
   embedding:
-    model: "text-embedding-v4"
-    device: "cpu"
+    model: "bge-m3:latest"
+    device: "gpu"
 
 # 文档处理配置
 document_processing:

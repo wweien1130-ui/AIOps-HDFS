@@ -81,6 +81,14 @@ async def startup_event():
     except Exception as e:
         print(f"⚠️ 启动加载失败: {e}")
 
+    # 加载知识库到向量数据库
+    try:
+        from rag.vector_store import VectorStoreService
+        VectorStoreService().load_document()
+        print("✅ 知识库向量化完成")
+    except Exception as e:
+        print(f"⚠️ 知识库加载失败: {e}")
+
 
 class AnalyzeRequest(BaseModel):
     threshold: float = 0.3
