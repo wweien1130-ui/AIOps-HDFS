@@ -23,9 +23,9 @@ PROCESSED_DIR = os.path.join(WATCH_DIR, 'processed')
 os.makedirs(WATCH_DIR, exist_ok=True)
 os.makedirs(PROCESSED_DIR, exist_ok=True)
 
-SEND_RATE = 50  # 每秒发送的行数
+SEND_RATE = 10000  # 每秒发送的行数
 SEND_INTERVAL = 1.0 / SEND_RATE  # 每次发送的间隔时间（秒）
-MAX_LINES = 10000  # 测试时限制只发送1000行
+MAX_LINES = 1000000  # 测试时限制只发送1000行
 
 producer = KafkaProducer(
     bootstrap_servers=kafka_config['bootstrap_servers'],

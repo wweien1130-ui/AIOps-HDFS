@@ -759,8 +759,8 @@ async function fetchRealtimeAnomalies() {
   const timeStr = now.toLocaleTimeString()
   console.log(`[${timeStr}] 开始获取实时异常...`)
   try {
-    // 获取过去1小时的异常数据
-    const response = await fetch(`${API_BASE}/realtime/anomalies?limit=100&hours=1`)
+    // 获取过去1小时的异常数据（Top 10）
+    const response = await fetch(`${API_BASE}/realtime/anomalies?limit=10&hours=1`)
     const result = await response.json()
     console.log(`[${timeStr}] 获取成功，数据来源: ${result.source}`)
 
@@ -797,10 +797,13 @@ async function fetchRealtimeAnomalies() {
       // 计算系统健康度
       const anomalyRatio = totalBlocks > 0 ? topAnomalies.length / totalBlocks : 0
 
+      // 限制 Top 10
+      const top10 = topAnomalies.slice(0, 10)
+
       analyzeData.value = {
         ...analyzeData.value,
-        top_anomalies: topAnomalies,
-        anomaly_count: topAnomalies.length,
+        top_anomalies: top10,
+        anomaly_count: top10.length,
         total_blocks: totalBlocks,
         anomaly_ratio: anomalyRatio,
         event_distribution: eventDistribution
@@ -943,11 +946,14 @@ async function queryByTimeRange() {
       // 计算系统健康度
       const anomalyRatio = totalBlocks > 0 ? topAnomalies.length / totalBlocks : 0
 
+      // 限制 Top 10
+      const top10 = topAnomalies.slice(0, 10)
+
       analyzeData.value = {
         total_blocks: totalBlocks,
-        anomaly_count: topAnomalies.length,
+        anomaly_count: top10.length,
         anomaly_ratio: anomalyRatio,
-        top_anomalies: topAnomalies,
+        top_anomalies: top10,
         event_distribution: eventDistribution
       }
 

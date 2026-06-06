@@ -276,6 +276,141 @@ def rag_retrieve(query: str) -> str:
     return "在知识库中未找到关于该问题的直接描述，请尝试更换关键词（如直接搜索错误码E1）。"
 
 
+@tool(description="查询指定Block ID的详细异常信息（从ClickHouse/Redis获取事件分布和异常分数）")
+def query_block_detail(block_id: str) -> str:
+    """
+    查询指定Block ID的详细异常信息：
+    1. 优先从 Redis 获取
+    2. Redis 无数据则从 ClickHouse online 库查询
+    返回该 Block 的事件向量(E1-E29)和异常分数。
+    """
+    import yaml
+
+    # E1-E29 事件含义映射
+    event_meanings = {
+        'E1': '重复块添加', 'E2': '块校验成功', 'E3': '块服务请求',
+        'E4': '块服务异常', 'E5': '块接收中', 'E6': '块接收完成',
+        'E7': '写块异常', 'E8': '数据包中断', 'E9': '接收成功',
+        'E10': '数据包异常', 'E11': '响应器终止', 'E12': '镜像写异常',
+        'E13': '空数据包', 'E14': '接收异常', 'E15': '偏移变更',
+        'E16': '传输完成', 'E17': '传输失败', 'E18': '启动传输',
+        'E19': '重新打开块', 'E20': '删除元数据错误', 'E21': '删除块文件',
+        'E22': '分配块', 'E23': '标记无效', 'E24': '移除复制',
+        'E25': '请求复制', 'E26': '块映射更新', 'E27': '重复请求',
+        'E28': '块不在文件', 'E29': '复制超时'
+    }
+
+    config_dir = get_abs_path("config")
+
+    # 尝试从 Redis 获取
+    try:
+        import redis as _redis
+        redis_config_path = os.path.join(config_dir, "redis.yaml")
+        with open(redis_config_path, 'r', encoding='utf-8') as f:
+            redis_config = yaml.safe_load(f)['redis']
+
+        r = _redis.Redis(
+            host=redis_config['host'],
+            port=redis_config['port'],
+            db=redis_config.get('db', 0),
+            password=redis_config.get('password'),
+            decode_responses=True
+        )
+
+        key_prefix = redis_config.get('key_prefix', 'anomaly:')
+        detail_key = key_prefix + redis_config['keys']['detail'] + block_id
+        detail = r.hgetall(detail_key)
+
+        if detail:
+            score = detail.get('anomaly_score', 'N/A')
+
+            output = [f"[查询] Block: {block_id}"]
+            output.append(f"异常分数: {score}")
+            output.append(f"来源: Redis\n")
+
+            # Redis 存储格式：E1-E29 作为独立字段
+            events = []
+            for i in range(1, 30):
+                eid = f'E{i}'
+                val = detail.get(eid, '0')
+                try:
+                    val = int(val)
+                except (ValueError, TypeError):
+                    val = 0
+                if val > 0:
+                    meaning = event_meanings.get(eid, '未知事件')
+                    events.append((eid, val, meaning))
+            events.sort(key=lambda x: x[1], reverse=True)
+
+            if events:
+                output.append("事件分布:")
+                for eid, cnt, meaning in events:
+                    output.append(f"  {eid}: {cnt} - {meaning}")
+            else:
+                output.append("事件分布: 全部为0")
+
+            return "\n".join(output)
+    except Exception:
+        pass
+
+    # 从 ClickHouse 查询
+    try:
+        import clickhouse_connect
+        ch_config_path = os.path.join(config_dir, "clickhouse.yaml")
+        with open(ch_config_path, 'r', encoding='utf-8') as f:
+            ch_config = yaml.safe_load(f)['clickhouse']['online']
+
+        client = clickhouse_connect.get_client(
+            host=ch_config['host'],
+            port=ch_config.get('http_port', 8123),
+            username=ch_config.get('username', 'default'),
+            password=ch_config.get('password', '')
+        )
+
+        query = f"""
+        SELECT
+            block_id, anomaly_score, detected_at,
+            E1, E2, E3, E4, E5, E6, E7, E8, E9, E10,
+            E11, E12, E13, E14, E15, E16, E17, E18, E19, E20,
+            E21, E22, E23, E24, E25, E26, E27, E28, E29
+        FROM {ch_config['database']}.anomaly_blocks
+        WHERE block_id = '{block_id}'
+        ORDER BY anomaly_score DESC
+        LIMIT 1
+        """
+        df = client.query_df(query)
+
+        if df.empty:
+            return f"[查询] Block {block_id} 未找到异常记录（Redis 和 ClickHouse 均无数据）"
+
+        row = df.iloc[0]
+        output = [f"[查询] Block: {block_id}"]
+        output.append(f"异常分数: {row['anomaly_score']:.4f}")
+        output.append(f"检测时间: {row['detected_at']}")
+        output.append(f"来源: ClickHouse\n")
+
+        # 解析事件分布
+        events = []
+        for i in range(1, 30):
+            col = f'E{i}'
+            val = int(row.get(col, 0) or 0)
+            if val > 0:
+                meaning = event_meanings.get(col, '未知事件')
+                events.append((col, val, meaning))
+        events.sort(key=lambda x: x[1], reverse=True)
+
+        if events:
+            output.append("事件分布:")
+            for eid, cnt, meaning in events:
+                output.append(f"  {eid}: {cnt} - {meaning}")
+        else:
+            output.append("事件分布: 全部为0")
+
+        return "\n".join(output)
+    except Exception as e:
+        return f"[错误] 查询 Block {block_id} 失败: {str(e)}"
+
+
 @tool(description="获取当前时间")
 def get_current_time() -> str:
     from datetime import datetime

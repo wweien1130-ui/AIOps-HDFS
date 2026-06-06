@@ -683,7 +683,8 @@ async def query_anomalies(
 
         time_filter = " AND ".join(time_conditions)
 
-        # 查询异常数据
+        # 查询异常数据（多取候选以保证多样性）
+        candidate_limit = limit * 5
         query = f"""
         SELECT
             block_id,
@@ -695,7 +696,7 @@ async def query_anomalies(
         FROM {ch_config['database']}.anomaly_blocks
         WHERE {time_filter}
         ORDER BY anomaly_score DESC
-        LIMIT {limit}
+        LIMIT {candidate_limit}
         """
         anomalies_df = client.query_df(query)
 
@@ -716,9 +717,48 @@ async def query_anomalies(
             for _, row in event_df.iterrows():
                 event_distribution[row['event_id']] = int(row['total_count'])
 
+        # 多样化筛选：按主导事件类型分组，轮询选取
+        event_cols = [f'E{i}' for i in range(1, 30)]
+
+        def get_dominant_event(row):
+            max_val = 0
+            dominant = 'E23'
+            for col in event_cols:
+                val = row.get(col, 0) or 0
+                if val > max_val:
+                    max_val = val
+                    dominant = col
+            return dominant
+
+        anomalies_df['dominant_event'] = anomalies_df.apply(get_dominant_event, axis=1)
+
+        # 按主导事件类型分组，每组内按分数降序
+        groups = {}
+        for _, row in anomalies_df.iterrows():
+            evt = row['dominant_event']
+            if evt not in groups:
+                groups[evt] = []
+            groups[evt].append(row)
+
+        # 轮询选取：从每个组轮流取一条，直到达到limit
+        diverse_rows = []
+        group_keys = sorted(groups.keys())
+        indices = {k: 0 for k in group_keys}
+        while len(diverse_rows) < limit:
+            added = False
+            for key in group_keys:
+                if indices[key] < len(groups[key]):
+                    diverse_rows.append(groups[key][indices[key]])
+                    indices[key] += 1
+                    added = True
+                    if len(diverse_rows) >= limit:
+                        break
+            if not added:
+                break
+
         # 构建返回数据
         anomalies = []
-        for _, row in anomalies_df.iterrows():
+        for row in diverse_rows:
             events = []
             for i in range(1, 30):
                 col = f'E{i}'
@@ -819,26 +859,71 @@ async def get_realtime_anomalies(limit: int = 10, hours: int = None):
             key_prefix = redis_config.get('key_prefix', 'anomaly:')
             top_key = key_prefix + redis_config['keys']['top']
 
-            # 从Redis获取Top N
-            top_anomalies = r.zrevrange(top_key, 0, limit - 1, withscores=True)
+            # 从Redis获取候选（多取以保证多样性）
+            candidate_limit = limit * 5
+            top_anomalies = r.zrevrange(top_key, 0, candidate_limit - 1, withscores=True)
 
             if top_anomalies:
-                results = []
+                # 解析每条记录的主导事件类型
+                candidates = []
                 for block_id, score in top_anomalies:
                     detail_key = key_prefix + redis_config['keys']['detail'] + block_id
                     detail = r.hgetall(detail_key)
-                    results.append({
+
+                    # Redis 存储格式：E1-E29 作为独立字段
+                    dominant = 'E23'
+                    max_val = 0
+                    for i in range(1, 30):
+                        eid = f'E{i}'
+                        try:
+                            val = int(detail.get(eid, 0))
+                        except (ValueError, TypeError):
+                            val = 0
+                        if val > max_val:
+                            max_val = val
+                            dominant = eid
+
+                    candidates.append({
                         'block_id': block_id,
                         'anomaly_score': score,
+                        'dominant_event': dominant,
                         **detail
                     })
+
+                # 按主导事件类型分组，轮询选取
+                groups = {}
+                for item in candidates:
+                    evt = item['dominant_event']
+                    if evt not in groups:
+                        groups[evt] = []
+                    groups[evt].append(item)
+
+                diverse_results = []
+                group_keys = sorted(groups.keys())
+                indices = {k: 0 for k in group_keys}
+                while len(diverse_results) < limit:
+                    added = False
+                    for key in group_keys:
+                        if indices[key] < len(groups[key]):
+                            item = groups[key][indices[key]]
+                            # 移除临时字段
+                            item.pop('dominant_event', None)
+                            diverse_results.append(item)
+                            indices[key] += 1
+                            added = True
+                            if len(diverse_results) >= limit:
+                                break
+                    if not added:
+                        break
+
                 return {
                     "source": "redis",
-                    "anomalies": results,
+                    "anomalies": diverse_results,
                     "event_distribution": event_distribution
                 }
 
-        # 从ClickHouse获取（支持时间过滤）
+        # 从ClickHouse获取（支持时间过滤），多取候选以保证多样性
+        candidate_limit = limit * 5  # 多取5倍候选
         if hours:
             query = f"""
                 SELECT
@@ -851,7 +936,7 @@ async def get_realtime_anomalies(limit: int = 10, hours: int = None):
                 FROM {ch_config['database']}.anomaly_blocks
                 WHERE detected_at >= now() - INTERVAL {hours} HOUR
                 ORDER BY anomaly_score DESC
-                LIMIT {limit}
+                LIMIT {candidate_limit}
             """
         else:
             query = f"""
@@ -864,15 +949,57 @@ async def get_realtime_anomalies(limit: int = 10, hours: int = None):
                 E21, E22, E23, E24, E25, E26, E27, E28, E29
                 FROM {ch_config['database']}.anomaly_blocks
                 ORDER BY anomaly_score DESC
-                LIMIT {limit}
+                LIMIT {candidate_limit}
             """
 
         df = client.query_df(query)
 
         if not df.empty:
+            # 多样化筛选：按主导事件类型分组，轮询选取
+            event_cols = [f'E{i}' for i in range(1, 30)]
+
+            # 找出每条记录的主导事件类型（值最大的E列）
+            def get_dominant_event(row):
+                max_val = 0
+                dominant = 'E23'
+                for col in event_cols:
+                    val = row.get(col, 0) or 0
+                    if val > max_val:
+                        max_val = val
+                        dominant = col
+                return dominant
+
+            df['dominant_event'] = df.apply(get_dominant_event, axis=1)
+
+            # 按主导事件类型分组，每组内按分数降序
+            groups = {}
+            for _, row in df.iterrows():
+                evt = row['dominant_event']
+                if evt not in groups:
+                    groups[evt] = []
+                groups[evt].append(row.to_dict())
+
+            # 轮询选取：从每个组轮流取一条，直到达到limit
+            diverse_results = []
+            group_keys = sorted(groups.keys())
+            indices = {k: 0 for k in group_keys}
+            while len(diverse_results) < limit:
+                added = False
+                for key in group_keys:
+                    if indices[key] < len(groups[key]):
+                        item = groups[key][indices[key]]
+                        item.pop('dominant_event', None)
+                        diverse_results.append(item)
+                        indices[key] += 1
+                        added = True
+                        if len(diverse_results) >= limit:
+                            break
+                if not added:
+                    break
+
             return {
                 "source": "clickhouse",
-                "anomalies": df.to_dict('records'),
+                "anomalies": diverse_results,
                 "event_distribution": event_distribution
             }
 

@@ -24,6 +24,7 @@ from agent.tools.agent_tools import (
     rag_retrieve, get_current_time, calculate,
     preprocess_hdfs_logs, train_mlp_model, detect_anomaly, check_model_readiness,
     list_offline_batches, list_offline_anomalies, process_offline_batch,
+    query_block_detail,
     get_realtime_anomalies, start_realtime_service, stop_realtime_service,
     # 运维工具
     check_system_status, view_system_config, cleanup_redis_data,
@@ -124,6 +125,8 @@ class ReactAgent:
                 list_offline_batches,
                 list_offline_anomalies,
                 process_offline_batch,
+                # Block详情查询
+                query_block_detail,
                 # 核心检测
                 detect_anomaly,
                 # 知识检索
