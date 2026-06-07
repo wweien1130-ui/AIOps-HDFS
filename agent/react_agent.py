@@ -127,6 +127,8 @@ class ReactAgent:
                 process_offline_batch,
                 # Block详情查询
                 query_block_detail,
+                # 实时异常查询（ClickHouse）
+                get_realtime_anomalies,
                 # 核心检测
                 detect_anomaly,
                 # 知识检索

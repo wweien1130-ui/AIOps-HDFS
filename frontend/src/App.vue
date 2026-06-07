@@ -156,6 +156,33 @@
         </el-col>
 
         <el-col :span="16">
+          <!-- 统计面板 -->
+          <el-row :gutter="12" style="margin-bottom: 16px;">
+            <el-col :span="6">
+              <el-card class="stat-card" shadow="hover" body-style="padding: 12px 16px;">
+                <div class="stat-label">总日志条数</div>
+                <div class="stat-value" style="color: #58D9F9;">{{ (analyzeData.total_logs || 0).toLocaleString() }}</div>
+              </el-card>
+            </el-col>
+            <el-col :span="6">
+              <el-card class="stat-card" shadow="hover" body-style="padding: 12px 16px;">
+                <div class="stat-label">去重 Block 数</div>
+                <div class="stat-value" style="color: #4ECDC4;">{{ (analyzeData.total_blocks || 0).toLocaleString() }}</div>
+              </el-card>
+            </el-col>
+            <el-col :span="6">
+              <el-card class="stat-card" shadow="hover" body-style="padding: 12px 16px;">
+                <div class="stat-label">异常 Block 数</div>
+                <div class="stat-value" style="color: #FF6B6B;">{{ (analyzeData.anomaly_blocks || 0).toLocaleString() }}</div>
+              </el-card>
+            </el-col>
+            <el-col :span="6">
+              <el-card class="stat-card" shadow="hover" body-style="padding: 12px 16px;">
+                <div class="stat-label">系统健康度</div>
+                <div class="stat-value" style="color: #96CEB4;">{{ ((1 - analyzeData.anomaly_ratio) * 100).toFixed(1) }}%</div>
+              </el-card>
+            </el-col>
+          </el-row>
           <el-row :gutter="20">
             <el-col :span="12">
               <el-card class="chart-card" shadow="hover">
@@ -201,30 +228,30 @@
                   </div>
                 </template>
                 <el-table :data="topAnomalies" stripe style="width: 100%">
-                  <el-table-column prop="block_id" label="Block ID" width="180" />
-                  <el-table-column prop="probability" label="异常概率" width="100">
+                  <el-table-column prop="block_id" label="Block ID" width="200" />
+                  <el-table-column label="E事件分布" min-width="400">
                     <template #default="{ row }">
-                      <el-progress
-                        :percentage="(row.probability * 100).toFixed(1)"
-                        :color="getProgressColor(row.probability)"
-                      />
-                    </template>
-                  </el-table-column>
-                  <el-table-column prop="label" label="标签" width="70" />
-                  <el-table-column label="E事件" min-width="300">
-                    <template #default="{ row }">
-                      <el-tag
-                        v-for="(evt, idx) in (row.events || []).filter(e => e.count > 0).slice(0, 6)"
-                        :key="idx"
-                        size="small"
-                        :type="evt.count > 2 ? 'danger' : 'warning'"
-                        style="margin-right: 4px; margin-bottom: 2px;"
-                      >
-                        {{ evt.event_id }}:{{ evt.count }}
-                      </el-tag>
-                      <span v-if="(row.events || []).filter(e => e.count > 0).length > 6" style="color: #909399; font-size: 12px;">
-                        +{{ (row.events || []).filter(e => e.count > 0).length - 6 }}
-                      </span>
+                      <div style="display: flex; flex-wrap: wrap; gap: 4px; align-items: center;">
+                        <!-- 主导事件：大标签，突出显示 -->
+                        <el-tag
+                          v-if="row.events && row.events.length > 0"
+                          type="danger"
+                          effect="dark"
+                          size="default"
+                          style="font-size: 13px; font-weight: bold;"
+                        >
+                          {{ row.events[0].event_id }}: {{ row.events[0].count }} - {{ row.events[0].meaning }}
+                        </el-tag>
+                        <!-- 其余事件：小标签紧凑显示 -->
+                        <el-tag
+                          v-for="(evt, idx) in (row.events || []).slice(1)"
+                          :key="idx"
+                          size="small"
+                          :type="evt.count > 2 ? 'danger' : 'warning'"
+                        >
+                          {{ evt.event_id }}:{{ evt.count }}
+                        </el-tag>
+                      </div>
                     </template>
                   </el-table-column>
                 </el-table>
@@ -279,13 +306,29 @@ const pieChartRef = ref(null)
 let gaugeChart = null
 let pieChart = null
 
+// E1-E29 事件含义映射
+const EVENT_MEANINGS = {
+  E1: '重复添加Block', E2: '校验成功', E3: '提供Block服务',
+  E4: '服务异常', E5: '接收Block中', E6: '接收Block完成',
+  E7: '写Block异常', E8: '数据包响应中断', E9: '接收Block成功',
+  E10: '数据包响应异常', E11: '数据包响应终止', E12: '写镜像异常',
+  E13: '接收空数据包', E14: '接收Block异常', E15: '偏移变更',
+  E16: '传输完成', E17: '传输失败', E18: '开始传输',
+  E19: '重新打开Block', E20: '删除Block异常', E21: '删除Block文件',
+  E22: '分配Block', E23: '标记无效', E24: '移除复制',
+  E25: '请求复制', E26: 'Block映射更新', E27: '重复添加存储Block',
+  E28: 'Block不在文件中', E29: '复制超时'
+}
+
 const isRecording = ref(false)
 const isSpeaking = ref(false)
 let recognition = null
 let synthesis = null
 
 const analyzeData = ref({
+  total_logs: 0,
   total_blocks: 0,
+  anomaly_blocks: 0,
   anomaly_count: 0,
   anomaly_ratio: 0,
   top_anomalies: []
@@ -401,20 +444,14 @@ const gaugeOption = computed(() => ({
 // 当前选中的图表类型
 const chartType = ref('pie')
 
-// 饼图配置（自动显示数据标签）
+// 饼图配置（自动显示数据标签）- 使用全局事件分布
 const pieOption = computed(() => {
-  const eventCounts = {}
-  topAnomalies.value.forEach(anomaly => {
-    anomaly.events.forEach(event => {
-      const eventId = event.event_id
-      eventCounts[eventId] = (eventCounts[eventId] || 0) + event.count
-    })
-  })
+  const eventDist = analyzeData.value.event_distribution || {}
 
-  const pieData = Object.entries(eventCounts)
+  const pieData = Object.entries(eventDist)
     .map(([name, value]) => ({ name, value }))
     .sort((a, b) => b.value - a.value)
-    .slice(0, 8)
+    .slice(0, 10)
 
   return {
     tooltip: {
@@ -448,7 +485,7 @@ const pieOption = computed(() => {
         label: {
           show: true,
           position: 'outside',
-          formatter: '{b}\n{c}',
+          formatter: '{b}\n{d}%',
           fontSize: 10,
           color: '#fff',
           lineHeight: 14
@@ -482,17 +519,11 @@ const pieOption = computed(() => {
   }
 })
 
-// 柱状图配置
+// 柱状图配置 - 使用全局事件分布
 const barOption = computed(() => {
-  const eventCounts = {}
-  topAnomalies.value.forEach(anomaly => {
-    anomaly.events.forEach(event => {
-      const eventId = event.event_id
-      eventCounts[eventId] = (eventCounts[eventId] || 0) + event.count
-    })
-  })
+  const eventDist = analyzeData.value.event_distribution || {}
 
-  const barData = Object.entries(eventCounts)
+  const barData = Object.entries(eventDist)
     .map(([name, value]) => ({ name, value }))
     .sort((a, b) => b.value - a.value)
     .slice(0, 10)
@@ -567,17 +598,11 @@ const barOption = computed(() => {
   }
 })
 
-// 折线图配置
+// 折线图配置 - 使用全局事件分布
 const lineOption = computed(() => {
-  const eventCounts = {}
-  topAnomalies.value.forEach(anomaly => {
-    anomaly.events.forEach(event => {
-      const eventId = event.event_id
-      eventCounts[eventId] = (eventCounts[eventId] || 0) + event.count
-    })
-  })
+  const eventDist = analyzeData.value.event_distribution || {}
 
-  const lineData = Object.entries(eventCounts)
+  const lineData = Object.entries(eventDist)
     .map(([name, value]) => ({ name, value }))
     .sort((a, b) => b.value - a.value)
     .slice(0, 10)
@@ -664,22 +689,18 @@ const currentChartOption = computed(() => {
   }
 })
 
-function getProgressColor(probability) {
-  if (probability > 0.8) return '#FF6B6B'
-  if (probability > 0.5) return '#FFB347'
-  return '#4ECDC4'
-}
-
 async function fetchAnalyzeData() {
   try {
-    // 并行获取总Block数和异常数据
+    // 并行获取统计数据和异常数据
     const [totalResponse, anomaliesResponse] = await Promise.all([
       fetch(`${API_BASE}/realtime/total`),
-      fetch(`${API_BASE}/realtime/anomalies?limit=10&hours=1`)
+      fetch(`${API_BASE}/realtime/anomalies?limit=10`)
     ])
 
     const totalResult = await totalResponse.json()
+    const totalLogs = totalResult.total_logs || 0
     const totalBlocks = totalResult.total_blocks || 0
+    const anomalyBlocks = totalResult.anomaly_blocks || 0
 
     const result = await anomaliesResponse.json()
 
@@ -688,18 +709,12 @@ async function fetchAnalyzeData() {
       const topAnomalies = result.anomalies.map(a => {
         const events = Object.entries(a)
           .filter(([k]) => k.startsWith('E'))
-          .map(([k, v]) => ({ event_id: k, count: parseInt(v) || 0 }))
-        if (events.length === 0) {
-          Object.entries(eventDist).forEach(([k, v]) => {
-            if (k.startsWith('E')) events.push({ event_id: k, count: parseInt(v) || 0 })
-          })
-          events.sort((a, b) => b.count - a.count)
-          events.splice(6)
-        }
+          .map(([k, v]) => ({ event_id: k, count: parseInt(v) || 0, meaning: EVENT_MEANINGS[k] || k }))
+          .filter(e => e.count > 0)
+          .sort((a, b) => b.count - a.count)
         return {
           block_id: a.block_id,
-          probability: parseFloat(a.anomaly_score) || 0,
-          events: events.filter(e => e.count > 0)
+          events: events
         }
       })
 
@@ -711,11 +726,14 @@ async function fetchAnalyzeData() {
       })
 
       // 计算系统健康度
-      const anomalyRatio = totalBlocks > 0 ? topAnomalies.length / totalBlocks : 0
+      const totalAnomalies = result.total_anomalies || anomalyBlocks
+      const anomalyRatio = totalBlocks > 0 ? totalAnomalies / totalBlocks : 0
 
       analyzeData.value = {
+        total_logs: totalLogs,
         total_blocks: totalBlocks,
-        anomaly_count: topAnomalies.length,
+        anomaly_blocks: anomalyBlocks,
+        anomaly_count: totalAnomalies,
         anomaly_ratio: anomalyRatio,
         top_anomalies: topAnomalies,
         event_distribution: eventDistribution
@@ -723,12 +741,14 @@ async function fetchAnalyzeData() {
 
       systemLogs.value.unshift({
         time: new Date().toLocaleTimeString(),
-        message: `检测完成：总Block ${totalBlocks}，异常 ${topAnomalies.length} 个 (健康度: ${((1 - anomalyRatio) * 100).toFixed(1)}%)`,
+        message: `检测完成：日志 ${totalLogs} 条，Block ${totalBlocks} 个，异常 ${totalAnomalies} 个`,
         type: topAnomalies.length > 0 ? 'warning' : 'success'
       })
     } else {
       analyzeData.value = {
+        total_logs: totalLogs,
         total_blocks: totalBlocks,
+        anomaly_blocks: anomalyBlocks,
         anomaly_count: 0,
         anomaly_ratio: 0,
         top_anomalies: [],
@@ -759,8 +779,8 @@ async function fetchRealtimeAnomalies() {
   const timeStr = now.toLocaleTimeString()
   console.log(`[${timeStr}] 开始获取实时异常...`)
   try {
-    // 获取过去1小时的异常数据（Top 10）
-    const response = await fetch(`${API_BASE}/realtime/anomalies?limit=10&hours=1`)
+    // 获取过去24小时的异常数据（Top 10）
+    const response = await fetch(`${API_BASE}/realtime/anomalies?limit=10`)
     const result = await response.json()
     console.log(`[${timeStr}] 获取成功，数据来源: ${result.source}`)
 
@@ -769,18 +789,12 @@ async function fetchRealtimeAnomalies() {
       const topAnomalies = result.anomalies.map(a => {
         const events = Object.entries(a)
           .filter(([k]) => k.startsWith('E'))
-          .map(([k, v]) => ({ event_id: k, count: parseInt(v) || 0 }))
-        if (events.length === 0) {
-          Object.entries(eventDist).forEach(([k, v]) => {
-            if (k.startsWith('E')) events.push({ event_id: k, count: parseInt(v) || 0 })
-          })
-          events.sort((a, b) => b.count - a.count)
-          events.splice(6)
-        }
+          .map(([k, v]) => ({ event_id: k, count: parseInt(v) || 0, meaning: EVENT_MEANINGS[k] || k }))
+          .filter(e => e.count > 0)
+          .sort((a, b) => b.count - a.count)
         return {
           block_id: a.block_id,
-          probability: parseFloat(a.anomaly_score) || 0,
-          events: events.filter(e => e.count > 0)
+          events: events
         }
       })
       const eventDistribution = {}
@@ -789,28 +803,32 @@ async function fetchRealtimeAnomalies() {
           eventDistribution[evt.event_id] = (eventDistribution[evt.event_id] || 0) + evt.count
         })
       })
-      // 获取总Block数
+      // 获取统计数据
       const totalResponse = await fetch(`${API_BASE}/realtime/total`)
       const totalResult = await totalResponse.json()
+      const totalLogs = totalResult.total_logs || 0
       const totalBlocks = totalResult.total_blocks || 0
+      const anomalyBlocks = totalResult.anomaly_blocks || 0
 
-      // 计算系统健康度
-      const anomalyRatio = totalBlocks > 0 ? topAnomalies.length / totalBlocks : 0
+      const totalAnomalies = result.total_anomalies || anomalyBlocks
+      const anomalyRatio = totalBlocks > 0 ? totalAnomalies / totalBlocks : 0
 
       // 限制 Top 10
       const top10 = topAnomalies.slice(0, 10)
 
       analyzeData.value = {
         ...analyzeData.value,
-        top_anomalies: top10,
-        anomaly_count: top10.length,
+        total_logs: totalLogs,
         total_blocks: totalBlocks,
+        anomaly_blocks: anomalyBlocks,
+        top_anomalies: top10,
+        anomaly_count: totalAnomalies,
         anomaly_ratio: anomalyRatio,
         event_distribution: eventDistribution
       }
       systemLogs.value.unshift({
         time: new Date().toLocaleTimeString(),
-        message: `实时异常：总Block ${totalBlocks}，异常 ${topAnomalies.length} 个 (健康度: ${((1 - anomalyRatio) * 100).toFixed(1)}%)`,
+        message: `实时异常：日志 ${totalLogs} 条，Block ${totalBlocks} 个，异常 ${totalAnomalies} 个`,
         type: 'success'
       })
       if (systemLogs.value.length > 10) {
@@ -912,7 +930,9 @@ async function queryByTimeRange() {
     ])
 
     const totalResult = await totalResponse.json()
+    const totalLogs = totalResult.total_logs || 0
     const totalBlocks = totalResult.total_blocks || 0
+    const anomalyBlocks = totalResult.anomaly_blocks || 0
 
     const result = await anomaliesResponse.json()
 
@@ -921,18 +941,12 @@ async function queryByTimeRange() {
       const topAnomalies = result.anomalies.map(a => {
         const events = Object.entries(a)
           .filter(([k]) => k.startsWith('E'))
-          .map(([k, v]) => ({ event_id: k, count: parseInt(v) || 0 }))
-        if (events.length === 0) {
-          Object.entries(eventDist).forEach(([k, v]) => {
-            if (k.startsWith('E')) events.push({ event_id: k, count: parseInt(v) || 0 })
-          })
-          events.sort((a, b) => b.count - a.count)
-          events.splice(6)
-        }
+          .map(([k, v]) => ({ event_id: k, count: parseInt(v) || 0, meaning: EVENT_MEANINGS[k] || k }))
+          .filter(e => e.count > 0)
+          .sort((a, b) => b.count - a.count)
         return {
           block_id: a.block_id,
-          probability: parseFloat(a.anomaly_score) || 0,
-          events: events.filter(e => e.count > 0)
+          events: events
         }
       })
 
@@ -944,14 +958,17 @@ async function queryByTimeRange() {
       })
 
       // 计算系统健康度
-      const anomalyRatio = totalBlocks > 0 ? topAnomalies.length / totalBlocks : 0
+      const totalAnomalies = result.total_anomalies || anomalyBlocks
+      const anomalyRatio = totalBlocks > 0 ? totalAnomalies / totalBlocks : 0
 
       // 限制 Top 10
       const top10 = topAnomalies.slice(0, 10)
 
       analyzeData.value = {
+        total_logs: totalLogs,
         total_blocks: totalBlocks,
-        anomaly_count: top10.length,
+        anomaly_blocks: anomalyBlocks,
+        anomaly_count: totalAnomalies,
         anomaly_ratio: anomalyRatio,
         top_anomalies: top10,
         event_distribution: eventDistribution
@@ -1324,8 +1341,8 @@ function handleRealtimeChange(val) {
       } finally {
         isFetching = false
       }
-    }, 5000)
-    ElMessage.success('实时模式已开启，每5秒刷新一次')
+    }, 3000)
+    ElMessage.success('实时模式已开启，每3秒刷新一次')
   } else {
     if (realtimeTimer) {
       clearInterval(realtimeTimer)
@@ -1783,6 +1800,24 @@ function updateCharts() {
 
 .chart-container {
   height: 250px;
+}
+
+.stat-card {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #fff;
+  text-align: center;
+}
+
+.stat-label {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+  margin-bottom: 4px;
+}
+
+.stat-value {
+  font-size: 22px;
+  font-weight: bold;
 }
 
 .table-card {

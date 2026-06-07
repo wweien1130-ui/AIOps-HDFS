@@ -159,35 +159,16 @@ def list_offline_anomalies(batch_id: str) -> str:
 
     # E1-E29事件含义映射（中文）
     event_meanings = {
-        'E1': '重复块添加',
-        'E2': '块校验成功',
-        'E3': '块服务请求',
-        'E4': '块服务异常',
-        'E5': '块接收中',
-        'E6': '块接收完成',
-        'E7': '写块异常',
-        'E8': '数据包中断',
-        'E9': '接收成功',
-        'E10': '数据包异常',
-        'E11': '响应器终止',
-        'E12': '镜像写异常',
-        'E13': '空数据包',
-        'E14': '接收异常',
-        'E15': '偏移变更',
-        'E16': '传输完成',
-        'E17': '传输失败',
-        'E18': '启动传输',
-        'E19': '重新打开块',
-        'E20': '删除元数据错误',
-        'E21': '删除块文件',
-        'E22': '分配块',
-        'E23': '标记无效',
-        'E24': '移除复制',
-        'E25': '请求复制',
-        'E26': '块映射更新',
-        'E27': '重复请求',
-        'E28': '块不在文件',
-        'E29': '复制超时'
+        'E1': '重复添加Block', 'E2': '校验成功', 'E3': '提供Block服务',
+        'E4': '服务异常', 'E5': '接收Block中', 'E6': '接收Block完成',
+        'E7': '写Block异常', 'E8': '数据包响应中断', 'E9': '接收Block成功',
+        'E10': '数据包响应异常', 'E11': '数据包响应终止', 'E12': '写镜像异常',
+        'E13': '接收空数据包', 'E14': '接收Block异常', 'E15': '偏移变更',
+        'E16': '传输完成', 'E17': '传输失败', 'E18': '开始传输',
+        'E19': '重新打开Block', 'E20': '删除Block异常', 'E21': '删除Block文件',
+        'E22': '分配Block', 'E23': '标记无效', 'E24': '移除复制',
+        'E25': '请求复制', 'E26': 'Block映射更新', 'E27': '重复添加存储Block',
+        'E28': 'Block不在文件中', 'E29': '复制超时'
     }
 
     output = [f"🎯 **批次 {batch_id} 异常分析报告**"]
@@ -225,10 +206,10 @@ def check_model_readiness() -> str:
     """
     专门给 Agent 调用的‘眼睛’，返回模型和数据的物理存在状态。
     """
-    # model_path = get_abs_path("LogMLP_Model.pth")
-    model_path = os.path.join(HDFS_BASE_DIR, "Preprocess_File", "block_anomaly_model.pkl")
-    scaler_path = os.path.join(HDFS_BASE_DIR, "Preprocess_File", "scaler.pkl")
-    matrix_path = os.path.join(HDFS_BASE_DIR, "File", "Event_occurrence_matrix.csv")
+    new_mlp_dir = os.path.join(PROJECT_ROOT, "New_Mlp")
+    model_path = os.path.join(new_mlp_dir, "block_anomaly_model.pkl")
+    scaler_path = os.path.join(new_mlp_dir, "scaler.pkl")
+    matrix_path = os.path.join(new_mlp_dir, "Event_occurrence_matrix.csv")
 
     status = []
     status.append(f"模型文件: {'[成功] 已存在' if os.path.exists(model_path) else '[错误] 缺失'}")
@@ -276,84 +257,29 @@ def rag_retrieve(query: str) -> str:
     return "在知识库中未找到关于该问题的直接描述，请尝试更换关键词（如直接搜索错误码E1）。"
 
 
-@tool(description="查询指定Block ID的详细异常信息（从ClickHouse/Redis获取事件分布和异常分数）")
+@tool(description="查询指定Block ID的详细异常信息（从ClickHouse获取事件分布和异常分数）")
 def query_block_detail(block_id: str) -> str:
     """
-    查询指定Block ID的详细异常信息：
-    1. 优先从 Redis 获取
-    2. Redis 无数据则从 ClickHouse online 库查询
+    查询指定Block ID的详细异常信息，从ClickHouse获取。
     返回该 Block 的事件向量(E1-E29)和异常分数。
     """
     import yaml
 
-    # E1-E29 事件含义映射
     event_meanings = {
-        'E1': '重复块添加', 'E2': '块校验成功', 'E3': '块服务请求',
-        'E4': '块服务异常', 'E5': '块接收中', 'E6': '块接收完成',
-        'E7': '写块异常', 'E8': '数据包中断', 'E9': '接收成功',
-        'E10': '数据包异常', 'E11': '响应器终止', 'E12': '镜像写异常',
-        'E13': '空数据包', 'E14': '接收异常', 'E15': '偏移变更',
-        'E16': '传输完成', 'E17': '传输失败', 'E18': '启动传输',
-        'E19': '重新打开块', 'E20': '删除元数据错误', 'E21': '删除块文件',
-        'E22': '分配块', 'E23': '标记无效', 'E24': '移除复制',
-        'E25': '请求复制', 'E26': '块映射更新', 'E27': '重复请求',
-        'E28': '块不在文件', 'E29': '复制超时'
+        'E1': '重复添加Block', 'E2': '校验成功', 'E3': '提供Block服务',
+        'E4': '服务异常', 'E5': '接收Block中', 'E6': '接收Block完成',
+        'E7': '写Block异常', 'E8': '数据包响应中断', 'E9': '接收Block成功',
+        'E10': '数据包响应异常', 'E11': '数据包响应终止', 'E12': '写镜像异常',
+        'E13': '接收空数据包', 'E14': '接收Block异常', 'E15': '偏移变更',
+        'E16': '传输完成', 'E17': '传输失败', 'E18': '开始传输',
+        'E19': '重新打开Block', 'E20': '删除Block异常', 'E21': '删除Block文件',
+        'E22': '分配Block', 'E23': '标记无效', 'E24': '移除复制',
+        'E25': '请求复制', 'E26': 'Block映射更新', 'E27': '重复添加存储Block',
+        'E28': 'Block不在文件中', 'E29': '复制超时'
     }
 
     config_dir = get_abs_path("config")
 
-    # 尝试从 Redis 获取
-    try:
-        import redis as _redis
-        redis_config_path = os.path.join(config_dir, "redis.yaml")
-        with open(redis_config_path, 'r', encoding='utf-8') as f:
-            redis_config = yaml.safe_load(f)['redis']
-
-        r = _redis.Redis(
-            host=redis_config['host'],
-            port=redis_config['port'],
-            db=redis_config.get('db', 0),
-            password=redis_config.get('password'),
-            decode_responses=True
-        )
-
-        key_prefix = redis_config.get('key_prefix', 'anomaly:')
-        detail_key = key_prefix + redis_config['keys']['detail'] + block_id
-        detail = r.hgetall(detail_key)
-
-        if detail:
-            score = detail.get('anomaly_score', 'N/A')
-
-            output = [f"[查询] Block: {block_id}"]
-            output.append(f"异常分数: {score}")
-            output.append(f"来源: Redis\n")
-
-            # Redis 存储格式：E1-E29 作为独立字段
-            events = []
-            for i in range(1, 30):
-                eid = f'E{i}'
-                val = detail.get(eid, '0')
-                try:
-                    val = int(val)
-                except (ValueError, TypeError):
-                    val = 0
-                if val > 0:
-                    meaning = event_meanings.get(eid, '未知事件')
-                    events.append((eid, val, meaning))
-            events.sort(key=lambda x: x[1], reverse=True)
-
-            if events:
-                output.append("事件分布:")
-                for eid, cnt, meaning in events:
-                    output.append(f"  {eid}: {cnt} - {meaning}")
-            else:
-                output.append("事件分布: 全部为0")
-
-            return "\n".join(output)
-    except Exception:
-        pass
-
-    # 从 ClickHouse 查询
     try:
         import clickhouse_connect
         ch_config_path = os.path.join(config_dir, "clickhouse.yaml")
@@ -381,15 +307,13 @@ def query_block_detail(block_id: str) -> str:
         df = client.query_df(query)
 
         if df.empty:
-            return f"[查询] Block {block_id} 未找到异常记录（Redis 和 ClickHouse 均无数据）"
+            return f"[查询] Block {block_id} 在 ClickHouse 中未找到异常记录"
 
         row = df.iloc[0]
         output = [f"[查询] Block: {block_id}"]
         output.append(f"异常分数: {row['anomaly_score']:.4f}")
         output.append(f"检测时间: {row['detected_at']}")
-        output.append(f"来源: ClickHouse\n")
 
-        # 解析事件分布
         events = []
         for i in range(1, 30):
             col = f'E{i}'
@@ -400,11 +324,11 @@ def query_block_detail(block_id: str) -> str:
         events.sort(key=lambda x: x[1], reverse=True)
 
         if events:
-            output.append("事件分布:")
+            output.append("\n事件分布:")
             for eid, cnt, meaning in events:
                 output.append(f"  {eid}: {cnt} - {meaning}")
         else:
-            output.append("事件分布: 全部为0")
+            output.append("\n事件分布: 全部为0")
 
         return "\n".join(output)
     except Exception as e:
@@ -479,9 +403,10 @@ def train_mlp_model(epochs: int = 50) -> str:
     """
     print("[train_mlp_model] 开始执行...")
 
-    data_file = os.path.join(HDFS_BASE_DIR, "File", "Event_occurrence_matrix.csv")
-    model_out = os.path.join(HDFS_BASE_DIR, "Preprocess_File", "block_anomaly_model.pkl")
-    scaler_out = os.path.join(HDFS_BASE_DIR, "Preprocess_File", "scaler.pkl")
+    new_mlp_dir = os.path.join(PROJECT_ROOT, "New_Mlp")
+    data_file = os.path.join(new_mlp_dir, "Event_occurrence_matrix.csv")
+    model_out = os.path.join(new_mlp_dir, "block_anomaly_model.pkl")
+    scaler_out = os.path.join(new_mlp_dir, "scaler.pkl")
 
     print(f"[train_mlp_model] 检查模型是否存在: {model_out}")
     print(f"[train_mlp_model] 模型文件存在: {os.path.exists(model_out)}")
@@ -516,66 +441,20 @@ def train_mlp_model(epochs: int = 50) -> str:
 
 
 @tool(
-    description="【必须执行】使用MLP模型对HDFS日志进行异常检测，直接加载模型和数据进行预测，输出异常BlockId列表。不需要任何参数！")
+    description="【必须执行】从ClickHouse查询HDFS异常检测结果（与前端显示数据一致）。")
 def detect_anomaly(threshold: float = 0.3) -> str:
     """
-    核心异常检测工具。
-    使用 sklearn 的 MLPClassifier 模型 (block_anomaly_model.pkl)
-
-    [警告] 如果模型不存在，会自动训练！
+    从 ClickHouse 查询异常检测结果，数据与前端 Top 10 显示一致。
+    本地 MLP 模型仅用于训练，不用于查询。
     """
-    print("[detect_anomaly] 开始执行异常检测...")
+    from realtime_query import query_realtime_anomalies
+    return query_realtime_anomalies(10)
 
-    # 1. 使用正确的项目根目录路径
-    model_path = os.path.join(HDFS_BASE_DIR, "Preprocess_File", "block_anomaly_model.pkl")
-    scaler_path = os.path.join(HDFS_BASE_DIR, "Preprocess_File", "scaler.pkl")
-    matrix_file = os.path.join(HDFS_BASE_DIR, "File", "Event_occurrence_matrix.csv")
-    template_file = os.path.join(HDFS_BASE_DIR, "File", "HDFS.log_templates.csv")
-
-    # 检查模型是否存在，不存在则自动训练
-    if not os.path.exists(model_path) or not os.path.exists(scaler_path):
-        print("[detect_anomaly] 模型文件不存在，开始自动训练...")
-
-        # 确保矩阵文件存在
-        if not os.path.exists(matrix_file):
-            return "错误：特征矩阵文件不存在，请先执行预处理！"
-
-        # 调用训练函数
-        try:
-            from model.mlp_model import train_mlp
-
-            model_path, scaler_path, f1 = train_mlp(
-                data_file=matrix_file,
-                epochs=50,
-                model_out=model_path,
-                scaler_out=scaler_path
-            )
-            print(f"[detect_anomaly] 自动训练完成，F1: {f1}")
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            return f"自动训练失败：{str(e)}"
-
-
-    from model.inference import predict_anomaly, format_anomaly_report
-
-    # 调用预测函数
-    result = predict_anomaly(
-        model_path=model_path,
-        scaler_path=scaler_path,
-        matrix_file=matrix_file,
-        threshold=threshold
-    )
-        # 格式化报告
-    return format_anomaly_report(result)
-
-@tool(description="查询当前实时异常（从Redis/ClickHouse获取）。如无实时数据则返回提示。")
+@tool(description="查询当前Top N异常Block（从ClickHouse获取，包含事件分布）。用于回答用户关于实时/当前异常的问题。")
 def get_realtime_anomalies(limit: int = 10) -> str:
     """
-    查询实时异常数据：
-    1. 优先从 Redis 获取 Top N 异常
-    2. 如果 Redis 无数据，从 ClickHouse 查询
-    3. 如果都无数据，返回提示
+    从 ClickHouse 查询 Top N 异常 Block，包含完整事件分布。
+    用于回答"Top 10 异常"、"当前异常"、"实时异常"等问题。
     """
     return query_realtime_anomalies(limit)
 

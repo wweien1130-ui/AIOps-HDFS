@@ -16,7 +16,7 @@ from agent.react_agent import ReactAgent
 from api.routers.openclaw_chat import router as openclaw_router
 
 
-HDFS_BASE_DIR = get_abs_path("BackUp/Preprocess_File")
+HDFS_BASE_DIR = get_abs_path("New_Mlp")
 
 app = FastAPI(title="AI Application API", version="1.0.0")
 
@@ -523,7 +523,7 @@ async def upload_log_file(file: UploadFile = File(...)):
 @app.get("/api/realtime/total")
 async def get_total_blocks():
     """
-    获取ClickHouse中总Block数
+    获取ClickHouse中的统计数据：总日志数、去重Block数、异常Block数
     """
     import yaml
     import clickhouse_connect
@@ -542,14 +542,25 @@ async def get_total_blocks():
             password=ch_config.get('password', '')
         )
 
-        query = """
-        SELECT COUNT(DISTINCT block_id) as total_blocks
-        FROM online.block_event_stats
-        """
-        result = client.query_df(query)
-        total_blocks = int(result.iloc[0]['total_blocks']) if not result.empty else 0
+        db = ch_config['database']
 
-        return {"total_blocks": total_blocks}
+        # 总日志条数
+        r1 = client.query_df(f"SELECT count() as c FROM {db}.hdfs_logs")
+        total_logs = int(r1.iloc[0]['c']) if not r1.empty else 0
+
+        # 去重Block数
+        r2 = client.query_df(f"SELECT count(DISTINCT block_id) as c FROM {db}.block_event_stats")
+        distinct_blocks = int(r2.iloc[0]['c']) if not r2.empty else 0
+
+        # 异常Block数
+        r3 = client.query_df(f"SELECT count(DISTINCT block_id) as c FROM {db}.anomaly_blocks")
+        anomaly_blocks = int(r3.iloc[0]['c']) if not r3.empty else 0
+
+        return {
+            "total_logs": total_logs,
+            "total_blocks": distinct_blocks,
+            "anomaly_blocks": anomaly_blocks
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"查询失败: {str(e)}")
 
@@ -788,12 +799,12 @@ async def query_anomalies(
 @app.get("/api/realtime/anomalies")
 async def get_realtime_anomalies(limit: int = 10, hours: int = None):
     """
-    获取实时异常数据（从Redis/ClickHouse），包含事件分布统计
+    获取实时异常数据（直接从ClickHouse查询），包含事件分布统计
     支持时间过滤：hours参数指定查询过去N小时的数据
+    返回多样化的异常列表（按主导事件类型轮询选取，避免单一类型霸屏）
     """
     import yaml
     import clickhouse_connect
-    import redis
 
     config_dir = get_abs_path("config")
 
@@ -802,13 +813,7 @@ async def get_realtime_anomalies(limit: int = 10, hours: int = None):
     with open(ch_config_path, 'r', encoding='utf-8') as f:
         ch_config = yaml.safe_load(f)['clickhouse']['online']
 
-    # Redis配置
-    redis_config_path = os.path.join(config_dir, "redis.yaml")
-    with open(redis_config_path, 'r', encoding='utf-8') as f:
-        redis_config = yaml.safe_load(f)['redis']
-
     try:
-        # 连接ClickHouse获取事件分布统计
         client = clickhouse_connect.get_client(
             host=ch_config['host'],
             port=ch_config.get('http_port', 8123),
@@ -816,198 +821,107 @@ async def get_realtime_anomalies(limit: int = 10, hours: int = None):
             password=ch_config.get('password', '')
         )
 
-        # 获取事件分布统计（从block_event_stats表）
+        # 1. 事件分布统计（从block_event_stats表）
         if hours:
-            # 如果指定了时间范围，只统计该时间范围内的事件
             event_query = f"""
-            SELECT
-                event_id,
-                sum(cnt) as total_count
+            SELECT event_id, sum(cnt) as total_count
             FROM {ch_config['database']}.block_event_stats
             WHERE last_updated >= now() - INTERVAL {hours} HOUR
             GROUP BY event_id
             ORDER BY total_count DESC
             """
         else:
-            # 否则统计所有事件
             event_query = f"""
-            SELECT
-                event_id,
-                sum(cnt) as total_count
+            SELECT event_id, sum(cnt) as total_count
             FROM {ch_config['database']}.block_event_stats
             GROUP BY event_id
             ORDER BY total_count DESC
             """
 
         event_df = client.query_df(event_query)
-
         event_distribution = {}
         if not event_df.empty:
             for _, row in event_df.iterrows():
                 event_distribution[row['event_id']] = int(row['total_count'])
 
-        # 优先从Redis获取（仅当没有时间过滤时）
-        if not hours:
-            r = redis.Redis(
-                host=redis_config['host'],
-                port=redis_config['port'],
-                db=redis_config.get('db', 0),
-                password=redis_config.get('password'),
-                decode_responses=True
-            )
-
-            key_prefix = redis_config.get('key_prefix', 'anomaly:')
-            top_key = key_prefix + redis_config['keys']['top']
-
-            # 从Redis获取候选（多取以保证多样性）
-            candidate_limit = limit * 5
-            top_anomalies = r.zrevrange(top_key, 0, candidate_limit - 1, withscores=True)
-
-            if top_anomalies:
-                # 解析每条记录的主导事件类型
-                candidates = []
-                for block_id, score in top_anomalies:
-                    detail_key = key_prefix + redis_config['keys']['detail'] + block_id
-                    detail = r.hgetall(detail_key)
-
-                    # Redis 存储格式：E1-E29 作为独立字段
-                    dominant = 'E23'
-                    max_val = 0
-                    for i in range(1, 30):
-                        eid = f'E{i}'
-                        try:
-                            val = int(detail.get(eid, 0))
-                        except (ValueError, TypeError):
-                            val = 0
-                        if val > max_val:
-                            max_val = val
-                            dominant = eid
-
-                    candidates.append({
-                        'block_id': block_id,
-                        'anomaly_score': score,
-                        'dominant_event': dominant,
-                        **detail
-                    })
-
-                # 按主导事件类型分组，轮询选取
-                groups = {}
-                for item in candidates:
-                    evt = item['dominant_event']
-                    if evt not in groups:
-                        groups[evt] = []
-                    groups[evt].append(item)
-
-                diverse_results = []
-                group_keys = sorted(groups.keys())
-                indices = {k: 0 for k in group_keys}
-                while len(diverse_results) < limit:
-                    added = False
-                    for key in group_keys:
-                        if indices[key] < len(groups[key]):
-                            item = groups[key][indices[key]]
-                            # 移除临时字段
-                            item.pop('dominant_event', None)
-                            diverse_results.append(item)
-                            indices[key] += 1
-                            added = True
-                            if len(diverse_results) >= limit:
-                                break
-                    if not added:
-                        break
-
-                return {
-                    "source": "redis",
-                    "anomalies": diverse_results,
-                    "event_distribution": event_distribution
-                }
-
-        # 从ClickHouse获取（支持时间过滤），多取候选以保证多样性
-        candidate_limit = limit * 5  # 多取5倍候选
+        # 2. 查询异常总数
+        time_filter = ""
         if hours:
-            query = f"""
-                SELECT
-                block_id,
-                anomaly_score,
-                detected_at,
-                E1, E2, E3, E4, E5, E6, E7, E8, E9, E10,
-                E11, E12, E13, E14, E15, E16, E17, E18, E19, E20,
-                E21, E22, E23, E24, E25, E26, E27, E28, E29
-                FROM {ch_config['database']}.anomaly_blocks
-                WHERE detected_at >= now() - INTERVAL {hours} HOUR
-                ORDER BY anomaly_score DESC
-                LIMIT {candidate_limit}
-            """
-        else:
-            query = f"""
-                SELECT
-                block_id,
-                anomaly_score,
-                detected_at,
-                E1, E2, E3, E4, E5, E6, E7, E8, E9, E10,
-                E11, E12, E13, E14, E15, E16, E17, E18, E19, E20,
-                E21, E22, E23, E24, E25, E26, E27, E28, E29
-                FROM {ch_config['database']}.anomaly_blocks
-                ORDER BY anomaly_score DESC
-                LIMIT {candidate_limit}
-            """
+            time_filter = f"WHERE detected_at >= now() - INTERVAL {hours} HOUR"
 
+        count_query = f"""
+            SELECT count(DISTINCT block_id) as total
+            FROM {ch_config['database']}.anomaly_blocks
+            {time_filter}
+        """
+        count_df = client.query_df(count_query)
+        total_anomalies = int(count_df.iloc[0]['total']) if not count_df.empty else 0
+
+        # 3. 查询异常Block候选（多取以保证多样性）
+        candidate_limit = limit * 5
+        query = f"""
+            SELECT
+            block_id, anomaly_score, detected_at,
+            E1, E2, E3, E4, E5, E6, E7, E8, E9, E10,
+            E11, E12, E13, E14, E15, E16, E17, E18, E19, E20,
+            E21, E22, E23, E24, E25, E26, E27, E28, E29
+            FROM {ch_config['database']}.anomaly_blocks
+            {time_filter}
+            ORDER BY anomaly_score DESC
+            LIMIT {candidate_limit}
+        """
         df = client.query_df(query)
 
-        if not df.empty:
-            # 多样化筛选：按主导事件类型分组，轮询选取
-            event_cols = [f'E{i}' for i in range(1, 30)]
-
-            # 找出每条记录的主导事件类型（值最大的E列）
-            def get_dominant_event(row):
-                max_val = 0
-                dominant = 'E23'
-                for col in event_cols:
-                    val = row.get(col, 0) or 0
-                    if val > max_val:
-                        max_val = val
-                        dominant = col
-                return dominant
-
-            df['dominant_event'] = df.apply(get_dominant_event, axis=1)
-
-            # 按主导事件类型分组，每组内按分数降序
-            groups = {}
-            for _, row in df.iterrows():
-                evt = row['dominant_event']
-                if evt not in groups:
-                    groups[evt] = []
-                groups[evt].append(row.to_dict())
-
-            # 轮询选取：从每个组轮流取一条，直到达到limit
-            diverse_results = []
-            group_keys = sorted(groups.keys())
-            indices = {k: 0 for k in group_keys}
-            while len(diverse_results) < limit:
-                added = False
-                for key in group_keys:
-                    if indices[key] < len(groups[key]):
-                        item = groups[key][indices[key]]
-                        item.pop('dominant_event', None)
-                        diverse_results.append(item)
-                        indices[key] += 1
-                        added = True
-                        if len(diverse_results) >= limit:
-                            break
-                if not added:
-                    break
-
+        if df.empty:
             return {
-                "source": "clickhouse",
-                "anomalies": diverse_results,
+                "anomalies": [],
+                "total_anomalies": 0,
                 "event_distribution": event_distribution
             }
 
+        # 3. 多样化筛选：按主导事件类型分组，轮询选取
+        event_cols = [f'E{i}' for i in range(1, 30)]
+
+        def get_dominant_event(row):
+            max_val = 0
+            dominant = 'E23'
+            for col in event_cols:
+                val = row.get(col, 0) or 0
+                if val > max_val:
+                    max_val = val
+                    dominant = col
+            return dominant
+
+        df['dominant_event'] = df.apply(get_dominant_event, axis=1)
+
+        groups = {}
+        for _, row in df.iterrows():
+            evt = row['dominant_event']
+            if evt not in groups:
+                groups[evt] = []
+            groups[evt].append(row.to_dict())
+
+        diverse_results = []
+        group_keys = sorted(groups.keys())
+        indices = {k: 0 for k in group_keys}
+        while len(diverse_results) < limit:
+            added = False
+            for key in group_keys:
+                if indices[key] < len(groups[key]):
+                    item = groups[key][indices[key]]
+                    item.pop('dominant_event', None)
+                    diverse_results.append(item)
+                    indices[key] += 1
+                    added = True
+                    if len(diverse_results) >= limit:
+                        break
+            if not added:
+                break
+
         return {
-            "source": "none",
-            "anomalies": [],
-            "event_distribution": event_distribution,
-            "message": "暂无异常数据"
+            "anomalies": diverse_results,
+            "total_anomalies": total_anomalies,
+            "event_distribution": event_distribution
         }
 
     except Exception as e:

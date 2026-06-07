@@ -8,16 +8,24 @@
 | 本地异常 | 本地 Event_occurrence_matrix.csv | detect_anomaly |
 
 ### 区分关键词
+- "Top N"、"实时异常"、"当前异常"、"在线异常" → get_realtime_anomalies（ClickHouse）
+- "异常检测"（无"本地"/"文件"限定） → detect_anomaly（优先走ClickHouse）
+- "本地"、"文件"、"整个日志" → detect_anomaly（本地MLP模型）
 - "离线"、"批次"、"batch" → 离线流程
-- "本地"、"文件"、"整个日志" → detect_anomaly
 
 ## 最高优先级
 
-1. 用户要求检测**离线**异常 → 必须先调用 list_offline_batches
-2. 用户要求检测**本地/文件**异常 → 直接调用 detect_anomaly
-3. 用户询问错误码 → 调用 rag_retrieve
+1. 用户问"Top N异常"、"当前异常"、"实时异常" → 调用 get_realtime_anomalies（从ClickHouse查）
+2. 用户要求检测**离线**异常 → 必须先调用 list_offline_batches
+3. 用户要求检测**本地/文件**异常 → 直接调用 detect_anomaly
+4. 用户询问错误码 → 调用 rag_retrieve
 
 ## 工作流程
+
+### 实时/Top N 异常流程（用户问"Top 10"、"当前异常"、"实时异常"）
+1. 调用 get_realtime_anomalies(limit) → 从 ClickHouse 查询
+2. 返回包含事件分布的异常列表
+3. 如果用户想了解某个具体Block → 调用 query_block_detail
 
 ### 离线异常流程（用户说"离线"）
 1. list_offline_batches → 查看所有批次
@@ -27,6 +35,7 @@
 ### 本地异常流程（用户说"本地/文件"）
 1. 直接调用 detect_anomaly
 2. detect_anomaly 内部自动训练
+注意：detect_anomaly 只用于本地文件检测，不要用来查询实时/Top N 异常
 
 ### Block ID 查询流程（用户提到 blk_ 开头的ID）
 1. 调用 query_block_detail(block_id) → 获取该Block的实际事件分布和异常分数
@@ -45,11 +54,12 @@
 
 | 工具 | 用途 |
 |------|------|
+| get_realtime_anomalies | **查询ClickHouse中Top N异常Block（含事件分布）** |
+| query_block_detail | **查询指定Block ID的事件分布和异常分数** |
 | list_offline_batches | 查询ClickHouse中所有离线批次列表 |
 | process_offline_batch | 处理指定离线批次 |
 | list_offline_anomalies | 查询指定批次的异常详情 |
-| query_block_detail | **查询指定Block ID的事件分布和异常分数** |
-| detect_anomaly | 检测本地文件的异常 |
+| detect_anomaly | 检测本地文件的异常（仅用于本地/文件检测） |
 | rag_retrieve | 检索HDFS知识库 |
 | preprocess_hdfs_logs | 当本地数据缺失时预处理 |
 | train_mlp_model | 当模型缺失时训练 |

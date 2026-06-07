@@ -61,7 +61,7 @@ def load_config():
                 'password': r.get('password')
             }
 
-    model_base = os.path.join(project_root, 'BackUp', 'Preprocess_File')
+    model_base = os.path.join(project_root, 'New_Mlp')
     config['model_path'] = os.path.join(model_base, 'block_anomaly_model.pkl')
     config['scaler_path'] = os.path.join(model_base, 'scaler.pkl')
 

@@ -25,6 +25,7 @@ project_root = os.path.dirname(os.path.dirname(script_dir))
 
 # 尝试多个可能的模型路径
 possible_model_paths = [
+    os.path.join(project_root, 'New_Mlp', 'block_anomaly_model.pkl'),
     os.path.join(project_root, 'agent', 'tools', 'block_anomaly_model.pkl'),
     os.path.join(project_root, 'BackUp', 'Preprocess_File', 'block_anomaly_model.pkl'),
     os.path.join(project_root, 'block_anomaly_model.pkl'),
@@ -36,6 +37,7 @@ for p in possible_model_paths:
         break
 
 possible_scaler_paths = [
+    os.path.join(project_root, 'New_Mlp', 'scaler.pkl'),
     os.path.join(project_root, 'agent', 'tools', 'scaler.pkl'),
     os.path.join(project_root, 'BackUp', 'Preprocess_File', 'scaler.pkl'),
     os.path.join(project_root, 'scaler.pkl'),

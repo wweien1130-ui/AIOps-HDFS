@@ -137,7 +137,7 @@ def train_mlp(
     data = pd.read_csv(data_file)
 
     X = data.iloc[:, 3:].values
-    y = data['Label'].map({'Success': 0, 'Fail': 1}).values
+    y = data['Label'].map({'Success': 0, 'Fail': 1, 'Normal': 0, 'Anomaly': 1}).values
     y = y.astype(int)
 
     scaler = StandardScaler()
