@@ -222,7 +222,23 @@ def check_model_readiness() -> str:
         return "\n".join(status) + "\n\n结论：组件不全，需要先执行预处理或训练。"
 
 
-def search_local_files(query: str):
+def _filter_by_event_ids(text: str, event_ids: list[str]) -> str:
+    """从文本中只提取与指定事件ID相关的段落"""
+    if not event_ids:
+        return text
+    # 构建事件ID的匹配模式（如 E5, E7, E22）
+    patterns = [re.compile(rf'\b{re.escape(eid)}\b', re.IGNORECASE) for eid in event_ids]
+    # 按段落分割
+    paragraphs = re.split(r'\n\s*\n', text)
+    matched = []
+    for para in paragraphs:
+        if any(p.search(para) for p in patterns):
+            # 限制每段最多500字符
+            matched.append(para.strip()[:500])
+    return "\n\n".join(matched) if matched else ""
+
+
+def search_local_files(query: str, event_ids: list[str] = None):
     results = []
     keywords = re.findall(r'[a-zA-Z0-9_]+', query)
 
@@ -235,24 +251,56 @@ def search_local_files(query: str):
             with open(path, 'r', encoding='utf-8') as f:
                 content = f.read()
                 if any(kw.lower() in content.lower() for kw in keywords):
-                    results.append(f"--- 来自文件: {file_name} ---\n{content}")
+                    if event_ids:
+                        # 只提取与指定事件ID相关的段落
+                        filtered = _filter_by_event_ids(content, event_ids)
+                        if filtered:
+                            results.append(f"--- 来自文件: {file_name} ---\n{filtered[:2000]}")
+                    else:
+                        sections = re.split(r'\n(?=[A-Z一-鿿])', content)
+                        matched_sections = []
+                        for section in sections:
+                            if any(kw.lower() in section.lower() for kw in keywords):
+                                matched_sections.append(section.strip())
+                        if matched_sections:
+                            section_text = "\n\n".join(matched_sections)
+                            results.append(f"--- 来自文件: {file_name} ---\n{section_text[:2000]}")
+            if sum(len(r) for r in results) > 4000:
+                break
     return "\n\n".join(results)
 
 
-@tool(description="【核心工具】检索HDFS知识库，获取错误码E1-E30的具体定义和修复指令")
-def rag_retrieve(query: str) -> str:
+@tool(description="【核心工具】检索HDFS知识库。query传查询关键词，event_ids传需要查询的事件ID列表（如['E7','E22']），只返回这些事件相关的内容。")
+def rag_retrieve(query: str, event_ids: str = "") -> str:
+    # 解析event_ids参数（逗号分隔的字符串，如 "E7,E22"）
+    eid_list = [e.strip() for e in event_ids.split(",") if e.strip()] if event_ids else []
+
     try:
         from rag.rag_service import RagSummarizerService
         rag = RagSummarizerService()
         docs = rag.retriever_docs(query)
         if docs and len(docs) > 0:
-            return "\n\n".join([d.page_content for d in docs])
+            filtered_parts = []
+            total_len = 0
+            for d in docs:
+                content = d.page_content
+                if eid_list:
+                    content = _filter_by_event_ids(content, eid_list)
+                if not content:
+                    continue
+                content = content[:2000]
+                if total_len + len(content) > 4000:
+                    break
+                filtered_parts.append(content)
+                total_len += len(content)
+            if filtered_parts:
+                return "\n\n---\n\n".join(filtered_parts)
     except Exception as e:
         print(f"向量检索失效，切换到本地文件搜索: {e}")
 
-    local_data = search_local_files(query)
+    local_data = search_local_files(query, event_ids=eid_list if eid_list else None)
     if local_data:
-        return local_data
+        return local_data[:4000]
 
     return "在知识库中未找到关于该问题的直接描述，请尝试更换关键词（如直接搜索错误码E1）。"
 
@@ -351,14 +399,14 @@ def calculate(expression: str) -> str:
 
 
 @tool(description="第一步：预处理HDFS日志（多级降级策略）")
-def preprocess_hdfs_logs(log_file: str = None) -> str:
+def preprocess_hdfs_logs() -> str:
     """
     预处理HDFS日志 - 多级降级策略：
 
     优先级1: 从备份目录复制官方 Event_occurrence_matrix.csv(从data_preparator获得)
     优先级2: 从备份目录复制 training_data.csv
     优先级3: 从备份目录复制 block_features.csv + Event.csv 并合并
-    兜底方案: 使用 log_preprocessor.py 本地解析日志文件（最慢）
+    兜底方案: 使用 generate_multi_matrix.py 自动扫描 HDFS_log_Train 目录生成特征矩阵
     """
     # 尝试使用 data_preparator (快速)
     try:
@@ -376,20 +424,27 @@ def preprocess_hdfs_logs(log_file: str = None) -> str:
     except Exception as e:
         print(f"data_preparator 调用失败，使用兜底方案: {e}")
 
-    # 兜底方案: 使用 log_preprocessor.py 本地解析（最慢但最可靠）
-    if not log_file or os.path.basename(log_file) == log_file:
-        log_file = os.path.join(HDFS_BASE_DIR, "HDFS.log")
+    # 兜底方案: 使用 generate_multi_matrix.py 从原始日志生成特征矩阵
+    # 兜底方案: 使用 generate_multi_matrix.py 自动扫描 HDFS_log_Train 目录生成特征矩阵
+    new_mlp_dir = os.path.join(PROJECT_ROOT, "New_Mlp")
+    generate_script = os.path.join(new_mlp_dir, "generate_multi_matrix.py")
 
-    matrix_file = os.path.join(HDFS_BASE_DIR, "preprocessed", "Event_occurrence_matrix.csv")
-    template_file = os.path.join(HDFS_BASE_DIR, "preprocessed", "HDFS.log_templates.csv")
+    if not os.path.exists(generate_script):
+        return f"[错误] 找不到生成脚本: {generate_script}"
 
     try:
-        from log_preprocessor import LogPreprocessor
-        preprocessor = LogPreprocessor()
-        preprocessor.load_templates(template_file)
-        preprocessor.preprocess_log(log_file, matrix_file)
+        import subprocess
+        result = subprocess.run(
+            ['python', generate_script],
+            cwd=new_mlp_dir,
+            capture_output=True, text=True, timeout=600
+        )
 
-        return f"[成功] 预处理成功（兜底方案）！已生成特征矩阵文件：{matrix_file}。现在可以调用 train_mlp_model 进行训练了。"
+        if result.returncode == 0:
+            matrix_file = os.path.join(new_mlp_dir, "Event_occurrence_matrix.csv")
+            return f"[成功] 预处理成功（兜底方案）！已生成特征矩阵文件：{matrix_file}\n{result.stdout}\n现在可以调用 train_mlp_model 进行训练了。"
+        else:
+            return f"[错误] 预处理失败: {result.stderr}"
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -404,7 +459,6 @@ def train_mlp_model(epochs: int = 50) -> str:
     print("[train_mlp_model] 开始执行...")
 
     new_mlp_dir = os.path.join(PROJECT_ROOT, "New_Mlp")
-    data_file = os.path.join(new_mlp_dir, "Event_occurrence_matrix.csv")
     model_out = os.path.join(new_mlp_dir, "block_anomaly_model.pkl")
     scaler_out = os.path.join(new_mlp_dir, "scaler.pkl")
 
@@ -417,8 +471,24 @@ def train_mlp_model(epochs: int = 50) -> str:
         print(f"[train_mlp_model] 模型已存在，跳过训练")
         return f"模型已存在！无需重复训练。文件位置: {model_out}。请直接调用 detect_anomaly 进行检测。"
 
+    # 查找训练数据文件（兼容多种格式）
+    data_file = os.path.join(new_mlp_dir, "Event_occurrence_matrix.csv")
     if not os.path.exists(data_file):
-        return "训练失败：找不到矩阵文件，请先执行 preprocess_hdfs_logs。"
+        # 降级: 检查 data_preparator 生成的 training_data.csv
+        backup_data = os.path.join(HDFS_BASE_DIR, "File", "training_data.csv")
+        if os.path.exists(backup_data):
+            import pandas as pd
+            df = pd.read_csv(backup_data)
+            # 去掉 target 列（如果有）
+            if 'target' in df.columns:
+                df = df.drop(columns=['target'])
+            # 统一标签格式
+            if 'Label' in df.columns:
+                df['Label'] = df['Label'].map({'Success': 'Normal', 'Fail': 'Anomaly', 'Normal': 'Normal', 'Anomaly': 'Anomaly'})
+            df.to_csv(data_file, index=False)
+            print(f"[train_mlp_model] 从 {backup_data} 转换并保存到 {data_file}")
+        else:
+            return "训练失败：找不到矩阵文件，请先执行 preprocess_hdfs_logs。"
 
     try:
         from model.mlp_model import train_mlp

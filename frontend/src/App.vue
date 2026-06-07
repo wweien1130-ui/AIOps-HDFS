@@ -3,11 +3,13 @@
     <el-header class="header">
       <div class="header-content">
         <div class="logo">
-          <el-icon size="28"><Monitor /></el-icon>
+          <el-icon size="28">
+            <Monitor />
+          </el-icon>
           <span class="title">AI智能日志异常检测系统</span>
         </div>
         <div class="marquee-box">
-          <div class="marquee-content" :class="{ 'marquee-paused': !isRealtime }">
+          <div class="marquee-content">
             <span v-for="(item, index) in systemLogs" :key="index" class="log-item">
               <el-tag :type="item.type" size="small">{{ item.time }}</el-tag>
               <span class="log-text">{{ item.message }}</span>
@@ -15,40 +17,27 @@
           </div>
         </div>
         <div class="header-actions">
-          <el-upload
-            action="/api/upload"
-            :show-file-list="false"
-            :on-success="handleUploadSuccess"
-            :on-error="handleUploadError"
-            accept=".log,.txt"
-          >
+          <el-upload action="/api/upload" :show-file-list="false" :on-success="handleUploadSuccess"
+            :on-error="handleUploadError" accept=".log,.txt">
             <el-button type="success">
-              <el-icon><Upload /></el-icon>
+              <el-icon>
+                <Upload />
+              </el-icon>
               上传日志
             </el-button>
           </el-upload>
           <el-button type="warning" @click="exportAnomalies">
-            <el-icon><Download /></el-icon>
+            <el-icon>
+              <Download />
+            </el-icon>
             导出异常
           </el-button>
-          <el-switch
-            v-model="isRealtime"
-            active-text="模拟实时"
-            inactive-text="停止"
-            @change="handleRealtimeChange"
-          />
-          <el-button type="primary" @click="refreshData" :loading="loading">
-            <el-icon><Refresh /></el-icon>
-            刷新数据
-          </el-button>
-          <el-input
-            v-model="timeRangeInput"
-            placeholder="输入时间范围 (如: 2h, 30m, 1d, 90s)"
-            style="width: 200px;"
-            @keyup.enter="queryByTimeRange"
-          >
+          <el-input v-model="timeRangeInput" placeholder="输入时间范围 (如: 2h, 30m, 1d, 90s)" style="width: 200px;"
+            @keyup.enter="queryByTimeRange">
             <template #prepend>
-              <el-icon><Clock /></el-icon>
+              <el-icon>
+                <Clock />
+              </el-icon>
             </template>
           </el-input>
           <el-button type="info" @click="queryByTimeRange">
@@ -73,46 +62,49 @@
                   <el-option label="纯云端" value="cloud" />
                 </el-select>
                 <el-button type="primary" size="small" @click="newChat" style="margin-left: auto;">
-                  <el-icon><Plus /></el-icon> 新对话
+                  <el-icon>
+                    <Plus />
+                  </el-icon> 新对话
                 </el-button>
               </div>
               <!-- 混合模式：展开两个子选择器 -->
               <div v-if="modelMode === 'auto'" class="model-sub-row">
                 <span class="sub-label">本地:</span>
                 <el-select v-model="autoLocal" size="small" style="width: 140px;">
-                  <el-option v-for="m in localModels" :key="'L'+m.name" :label="m.name + (m.is_default ? ' ★' : '')" :value="m.name" />
+                  <el-option v-for="m in localModels" :key="'L' + m.name" :label="m.name + (m.is_default ? ' ★' : '')"
+                    :value="m.name" />
                 </el-select>
                 <span class="sub-label" style="margin-left: 12px;">云端:</span>
                 <el-select v-model="autoCloud" size="small" style="width: 180px;">
-                  <el-option v-for="m in cloudModels" :key="'C'+m.name" :label="m.name + (m.is_default ? ' ★' : '')" :value="m.name" />
+                  <el-option v-for="m in cloudModels" :key="'C' + m.name" :label="m.name + (m.is_default ? ' ★' : '')"
+                    :value="m.name" />
                 </el-select>
               </div>
               <!-- 纯本地：展开本地模型选择 -->
               <div v-if="modelMode === 'ollama'" class="model-sub-row">
                 <span class="sub-label">本地模型:</span>
                 <el-select v-model="singleLocal" size="small" style="width: 180px;">
-                  <el-option v-for="m in localModels" :key="'SL'+m.name" :label="m.name + (m.is_default ? ' ★' : '')" :value="m.name" />
+                  <el-option v-for="m in localModels" :key="'SL' + m.name" :label="m.name + (m.is_default ? ' ★' : '')"
+                    :value="m.name" />
                 </el-select>
               </div>
               <!-- 纯云端：展开云端模型选择 -->
               <div v-if="modelMode === 'cloud'" class="model-sub-row">
                 <span class="sub-label">云端模型:</span>
                 <el-select v-model="singleCloud" size="small" style="width: 220px;">
-                  <el-option v-for="m in cloudModels" :key="'SC'+m.name" :label="m.name + (m.is_default ? ' ★' : '')" :value="m.name" />
+                  <el-option v-for="m in cloudModels" :key="'SC' + m.name" :label="m.name + (m.is_default ? ' ★' : '')"
+                    :value="m.name" />
                 </el-select>
               </div>
             </template>
             <div class="chat-messages" ref="chatContainer">
               <div v-if="isTyping" class="processing-status">
-                <el-icon class="is-loading"><Loading /></el-icon>
+                <el-icon class="is-loading">
+                  <Loading />
+                </el-icon>
                 正在处理中，请稍候...
               </div>
-              <div
-                v-for="(msg, index) in chatMessages"
-                :key="index"
-                class="message"
-                :class="msg.role"
-              >
+              <div v-for="(msg, index) in chatMessages" :key="index" class="message" :class="msg.role">
                 <div class="message-content" v-html="renderMarkdown(msg.content)"></div>
               </div>
               <div v-if="isTyping" class="message assistant">
@@ -126,31 +118,19 @@
             <div class="chat-input">
               <div class="input-toolbar">
                 <el-button @click="triggerImageUpload" :disabled="isTyping" title="上传图片" class="tool-btn">
-                  <el-icon><Picture /></el-icon>
-                </el-button>
-                <el-button @click="toggleVoiceInput" :disabled="isTyping" :class="{ 'voice-active': isRecording }" title="语音输入" class="tool-btn">
-                  <el-icon><Microphone /></el-icon>
-                </el-button>
-                <el-button @click="speakLastResponse" :disabled="!lastResponse" title="语音播报" class="tool-btn">
-                  <el-icon><Headset /></el-icon>
+                  <el-icon>
+                    <Picture />
+                  </el-icon>
                 </el-button>
               </div>
-              <el-input
-                v-model="userInput"
-                placeholder="请描述您的问题，或上传图片分析..."
-                @keyup.enter="sendMessage"
-                :disabled="isTyping"
-              />
+              <el-input v-model="userInput" placeholder="请描述您的问题，或上传图片分析..." @keyup.enter="sendMessage"
+                :disabled="isTyping" />
               <el-button @click="sendMessage" :loading="isTyping" type="primary">
-                <el-icon><Promotion /></el-icon>
+                <el-icon>
+                  <Promotion />
+                </el-icon>
               </el-button>
-              <input
-                type="file"
-                ref="imageInput"
-                accept="image/*"
-                style="display: none;"
-                @change="handleImageUpload"
-              />
+              <input type="file" ref="imageInput" accept="image/*" style="display: none;" @change="handleImageUpload" />
             </div>
           </el-card>
         </el-col>
@@ -161,45 +141,54 @@
             <el-col :span="6">
               <el-card class="stat-card" shadow="hover" body-style="padding: 12px 16px;">
                 <div class="stat-label">总日志条数</div>
-                <div class="stat-value" style="color: #58D9F9;">{{ (analyzeData.total_logs || 0).toLocaleString() }}</div>
+                <div class="stat-value" style="color: #58D9F9;">{{ (analyzeData.total_logs || 0).toLocaleString() }}
+                </div>
               </el-card>
             </el-col>
             <el-col :span="6">
               <el-card class="stat-card" shadow="hover" body-style="padding: 12px 16px;">
                 <div class="stat-label">去重 Block 数</div>
-                <div class="stat-value" style="color: #4ECDC4;">{{ (analyzeData.total_blocks || 0).toLocaleString() }}</div>
+                <div class="stat-value" style="color: #4ECDC4;">{{ (analyzeData.total_blocks || 0).toLocaleString() }}
+                </div>
               </el-card>
             </el-col>
             <el-col :span="6">
               <el-card class="stat-card" shadow="hover" body-style="padding: 12px 16px;">
                 <div class="stat-label">异常 Block 数</div>
-                <div class="stat-value" style="color: #FF6B6B;">{{ (analyzeData.anomaly_blocks || 0).toLocaleString() }}</div>
+                <div class="stat-value" style="color: #FF6B6B;">{{ (analyzeData.anomaly_blocks || 0).toLocaleString() }}
+                </div>
               </el-card>
             </el-col>
             <el-col :span="6">
               <el-card class="stat-card" shadow="hover" body-style="padding: 12px 16px;">
                 <div class="stat-label">系统健康度</div>
-                <div class="stat-value" style="color: #96CEB4;">{{ ((1 - analyzeData.anomaly_ratio) * 100).toFixed(1) }}%</div>
+                <div class="stat-value" style="color: #96CEB4;">{{ ((1 - analyzeData.anomaly_ratio) * 100).toFixed(1)
+                }}%
+                </div>
               </el-card>
             </el-col>
           </el-row>
           <el-row :gutter="20">
-            <el-col :span="12">
+            <el-col :span="8">
               <el-card class="chart-card" shadow="hover">
                 <template #header>
                   <div class="card-header">
-                    <el-icon><DataAnalysis /></el-icon>
+                    <el-icon>
+                      <DataAnalysis />
+                    </el-icon>
                     <span>系统健康度</span>
                   </div>
                 </template>
                 <div class="chart-container" ref="gaugeChartRef"></div>
               </el-card>
             </el-col>
-            <el-col :span="12">
+            <el-col :span="16">
               <el-card class="chart-card" shadow="hover">
                 <template #header>
                   <div class="card-header">
-                    <el-icon><PieChart /></el-icon>
+                    <el-icon>
+                      <PieChart />
+                    </el-icon>
                     <span>异常类型分布</span>
                     <div style="margin-left: auto;">
                       <el-radio-group v-model="chartType" size="small">
@@ -220,11 +209,12 @@
               <el-card class="table-card" shadow="hover">
                 <template #header>
                   <div class="card-header">
-                    <el-icon><Warning /></el-icon>
+                    <el-icon>
+                      <Warning />
+                    </el-icon>
                     <span>Top 10 异常Block</span>
-                    <el-button type="primary" size="small" style="margin-left: auto;" @click="refreshData">
-                      <el-icon><Refresh /></el-icon>
-                    </el-button>
+                    <span style="margin-left: auto; font-size: 12px; color: rgba(255,255,255,0.4);">{{ isOnline ?
+                      '实时刷新中' : '等待启动' }}</span>
                   </div>
                 </template>
                 <el-table :data="topAnomalies" stripe style="width: 100%">
@@ -233,22 +223,13 @@
                     <template #default="{ row }">
                       <div style="display: flex; flex-wrap: wrap; gap: 4px; align-items: center;">
                         <!-- 主导事件：大标签，突出显示 -->
-                        <el-tag
-                          v-if="row.events && row.events.length > 0"
-                          type="danger"
-                          effect="dark"
-                          size="default"
-                          style="font-size: 13px; font-weight: bold;"
-                        >
+                        <el-tag v-if="row.events && row.events.length > 0" type="danger" effect="dark" size="default"
+                          style="font-size: 13px; font-weight: bold;">
                           {{ row.events[0].event_id }}: {{ row.events[0].count }} - {{ row.events[0].meaning }}
                         </el-tag>
                         <!-- 其余事件：小标签紧凑显示 -->
-                        <el-tag
-                          v-for="(evt, idx) in (row.events || []).slice(1)"
-                          :key="idx"
-                          size="small"
-                          :type="evt.count > 2 ? 'danger' : 'warning'"
-                        >
+                        <el-tag v-for="(evt, idx) in (row.events || []).slice(1)" :key="idx" size="small"
+                          :type="evt.count > 2 ? 'danger' : 'warning'">
                           {{ evt.event_id }}:{{ evt.count }}
                         </el-tag>
                       </div>
@@ -274,7 +255,6 @@ import { Plus, Clock } from '@element-plus/icons-vue'
 const API_BASE = '/api'
 
 const loading = ref(false)
-const isRealtime = ref(true)  // 默认开启实时模式（使用ClickHouse数据）
 const timeRangeInput = ref('1h')  // 时间范围输入框默认值
 const isTyping = ref(false)
 const userInput = ref('')
@@ -320,11 +300,6 @@ const EVENT_MEANINGS = {
   E28: 'Block不在文件中', E29: '复制超时'
 }
 
-const isRecording = ref(false)
-const isSpeaking = ref(false)
-let recognition = null
-let synthesis = null
-
 const analyzeData = ref({
   total_logs: 0,
   total_blocks: 0,
@@ -342,16 +317,6 @@ const systemLogs = ref([
   { time: '10:23:40', message: '检测到17个新异常', type: 'warning' },
   { time: '10:23:38', message: 'API服务连接正常', type: 'success' }
 ])
-
-const lastResponse = computed(() => {
-  const messages = chatMessages.value
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === 'assistant' && messages[i].content) {
-      return messages[i].content
-    }
-  }
-  return ''
-})
 
 function analyzeEmotion(text) {
   const urgentKeywords = ['紧急', '救命', '崩溃了', '坏了', '故障', '不行', '挂了', '死机', '蓝屏', '报错']
@@ -390,7 +355,48 @@ function newChat() {
 }
 
 let realtimeTimer = null
+let statusTimer = null
 let isFetching = false
+const isOnline = ref(false)
+
+function startDataRefresh() {
+  if (realtimeTimer) return
+  realtimeTimer = setInterval(async () => {
+    if (isFetching) return
+    isFetching = true
+    try {
+      await fetchAnalyzeData()
+      updateCharts()
+    } catch (e) {
+      console.error('自动刷新失败:', e)
+    } finally {
+      isFetching = false
+    }
+  }, 5000)
+}
+
+function stopDataRefresh() {
+  if (realtimeTimer) {
+    clearInterval(realtimeTimer)
+    realtimeTimer = null
+  }
+}
+
+async function checkServiceStatus() {
+  try {
+    const res = await fetch(`${API_BASE}/realtime/status`)
+    const data = await res.json()
+    if (data.online && !isOnline.value) {
+      isOnline.value = true
+      startDataRefresh()
+    } else if (!data.online && isOnline.value) {
+      isOnline.value = false
+      stopDataRefresh()
+    }
+  } catch (e) {
+    // 静默失败
+  }
+}
 
 const gaugeOption = computed(() => ({
   series: [
@@ -401,19 +407,21 @@ const gaugeOption = computed(() => ({
       min: 0,
       max: 100,
       splitNumber: 10,
+      radius: '70%',
+      center: ['50%', '60%'],
       itemStyle: {
         color: '#58D9F9'
       },
       progress: {
         show: true,
-        width: 30
+        width: 20
       },
       pointer: {
         show: false
       },
       axisLine: {
         lineStyle: {
-          width: 30
+          width: 20
         }
       },
       axisTick: {
@@ -427,8 +435,8 @@ const gaugeOption = computed(() => ({
       },
       detail: {
         valueAnimation: true,
-        fontSize: 36,
-        offsetCenter: [0, '40%'],
+        fontSize: 28,
+        offsetCenter: [0, '45%'],
         formatter: '{value}%',
         color: '#58D9F9'
       },
@@ -475,7 +483,7 @@ const pieOption = computed(() => {
         name: '异常类型',
         type: 'pie',
         radius: ['35%', '65%'],
-        center: ['35%', '50%'],
+        center: ['45%', '50%'],
         avoidLabelOverlap: true,
         itemStyle: {
           borderRadius: 8,
@@ -691,170 +699,43 @@ const currentChartOption = computed(() => {
 
 async function fetchAnalyzeData() {
   try {
-    // 并行获取统计数据和异常数据
-    const [totalResponse, anomaliesResponse] = await Promise.all([
-      fetch(`${API_BASE}/realtime/total`),
-      fetch(`${API_BASE}/realtime/anomalies?limit=10`)
-    ])
-
-    const totalResult = await totalResponse.json()
-    const totalLogs = totalResult.total_logs || 0
-    const totalBlocks = totalResult.total_blocks || 0
-    const anomalyBlocks = totalResult.anomaly_blocks || 0
-
-    const result = await anomaliesResponse.json()
-
-    if (result.anomalies && result.anomalies.length > 0) {
-      const eventDist = result.event_distribution || {}
-      const topAnomalies = result.anomalies.map(a => {
-        const events = Object.entries(a)
-          .filter(([k]) => k.startsWith('E'))
-          .map(([k, v]) => ({ event_id: k, count: parseInt(v) || 0, meaning: EVENT_MEANINGS[k] || k }))
-          .filter(e => e.count > 0)
-          .sort((a, b) => b.count - a.count)
-        return {
-          block_id: a.block_id,
-          events: events
-        }
-      })
-
-      const eventDistribution = {}
-      topAnomalies.forEach(anomaly => {
-        anomaly.events.forEach(evt => {
-          eventDistribution[evt.event_id] = (eventDistribution[evt.event_id] || 0) + evt.count
-        })
-      })
-
-      // 计算系统健康度
-      const totalAnomalies = result.total_anomalies || anomalyBlocks
-      const anomalyRatio = totalBlocks > 0 ? totalAnomalies / totalBlocks : 0
-
-      analyzeData.value = {
-        total_logs: totalLogs,
-        total_blocks: totalBlocks,
-        anomaly_blocks: anomalyBlocks,
-        anomaly_count: totalAnomalies,
-        anomaly_ratio: anomalyRatio,
-        top_anomalies: topAnomalies,
-        event_distribution: eventDistribution
-      }
-
-      systemLogs.value.unshift({
-        time: new Date().toLocaleTimeString(),
-        message: `检测完成：日志 ${totalLogs} 条，Block ${totalBlocks} 个，异常 ${totalAnomalies} 个`,
-        type: topAnomalies.length > 0 ? 'warning' : 'success'
-      })
-    } else {
-      analyzeData.value = {
-        total_logs: totalLogs,
-        total_blocks: totalBlocks,
-        anomaly_blocks: anomalyBlocks,
-        anomaly_count: 0,
-        anomaly_ratio: 0,
-        top_anomalies: [],
-        event_distribution: {}
-      }
-      systemLogs.value.unshift({
-        time: new Date().toLocaleTimeString(),
-        message: `检测完成：总Block ${totalBlocks}，无异常数据`,
-        type: 'success'
-      })
-    }
-
-    if (systemLogs.value.length > 10) {
-      systemLogs.value.pop()
-    }
-  } catch (error) {
-    console.error('获取分析数据失败:', error)
-    systemLogs.value.unshift({
-      time: new Date().toLocaleTimeString(),
-      message: `API请求失败: ${error.message}`,
-      type: 'danger'
-    })
-  }
-}
-
-async function fetchRealtimeAnomalies() {
-  const now = new Date()
-  const timeStr = now.toLocaleTimeString()
-  console.log(`[${timeStr}] 开始获取实时异常...`)
-  try {
-    // 获取过去24小时的异常数据（Top 10）
     const response = await fetch(`${API_BASE}/realtime/anomalies?limit=10`)
     const result = await response.json()
-    console.log(`[${timeStr}] 获取成功，数据来源: ${result.source}`)
 
-    if (result.anomalies && result.anomalies.length > 0) {
-      const eventDist = result.event_distribution || {}
-      const topAnomalies = result.anomalies.map(a => {
-        const events = Object.entries(a)
-          .filter(([k]) => k.startsWith('E'))
-          .map(([k, v]) => ({ event_id: k, count: parseInt(v) || 0, meaning: EVENT_MEANINGS[k] || k }))
-          .filter(e => e.count > 0)
-          .sort((a, b) => b.count - a.count)
-        return {
-          block_id: a.block_id,
-          events: events
-        }
-      })
-      const eventDistribution = {}
-      topAnomalies.forEach(anomaly => {
-        anomaly.events.forEach(evt => {
-          eventDistribution[evt.event_id] = (eventDistribution[evt.event_id] || 0) + evt.count
-        })
-      })
-      // 获取统计数据
-      const totalResponse = await fetch(`${API_BASE}/realtime/total`)
-      const totalResult = await totalResponse.json()
-      const totalLogs = totalResult.total_logs || 0
-      const totalBlocks = totalResult.total_blocks || 0
-      const anomalyBlocks = totalResult.anomaly_blocks || 0
+    const totalLogs = result.total_logs || 0
+    const totalBlocks = result.total_blocks || 0
+    const totalAnomalies = result.total_anomalies || 0
+    const anomalyRatio = totalBlocks > 0 ? totalAnomalies / totalBlocks : 0
+    const eventDist = result.event_distribution || {}
 
-      const totalAnomalies = result.total_anomalies || anomalyBlocks
-      const anomalyRatio = totalBlocks > 0 ? totalAnomalies / totalBlocks : 0
-
-      // 限制 Top 10
-      const top10 = topAnomalies.slice(0, 10)
-
-      analyzeData.value = {
-        ...analyzeData.value,
-        total_logs: totalLogs,
-        total_blocks: totalBlocks,
-        anomaly_blocks: anomalyBlocks,
-        top_anomalies: top10,
-        anomaly_count: totalAnomalies,
-        anomaly_ratio: anomalyRatio,
-        event_distribution: eventDistribution
-      }
-      systemLogs.value.unshift({
-        time: new Date().toLocaleTimeString(),
-        message: `实时异常：日志 ${totalLogs} 条，Block ${totalBlocks} 个，异常 ${totalAnomalies} 个`,
-        type: 'success'
-      })
-      if (systemLogs.value.length > 10) {
-        systemLogs.value.pop()
-      }
-    } else {
-      systemLogs.value.unshift({
-        time: new Date().toLocaleTimeString(),
-        message: '暂无实时异常数据',
-        type: 'info'
-      })
-    }
-  } catch (error) {
-    console.error('获取实时异常失败:', error)
-    systemLogs.value.unshift({
-      time: new Date().toLocaleTimeString(),
-      message: `获取实时异常失败: ${error.message}`,
-      type: 'danger'
+    const topAnomalies = (result.anomalies || []).map(a => {
+      const events = Object.entries(a)
+        .filter(([k]) => k.startsWith('E'))
+        .map(([k, v]) => ({ event_id: k, count: parseInt(v) || 0, meaning: EVENT_MEANINGS[k] || k }))
+        .filter(e => e.count > 0)
+        .sort((a, b) => b.count - a.count)
+      return { block_id: a.block_id, events }
     })
+
+    analyzeData.value = {
+      total_logs: totalLogs,
+      total_blocks: totalBlocks,
+      anomaly_blocks: totalAnomalies,
+      anomaly_count: totalAnomalies,
+      anomaly_ratio: anomalyRatio,
+      top_anomalies: topAnomalies,
+      event_distribution: eventDist
+    }
+
+    if (systemLogs.value.length > 10) systemLogs.value.pop()
+  } catch (error) {
+    console.error('获取分析数据失败:', error)
   }
 }
 
 async function refreshData() {
   loading.value = true
   await fetchAnalyzeData()
-  await fetchRealtimeAnomalies()
   updateCharts()
   loading.value = false
 }
@@ -950,12 +831,7 @@ async function queryByTimeRange() {
         }
       })
 
-      const eventDistribution = {}
-      topAnomalies.forEach(anomaly => {
-        anomaly.events.forEach(evt => {
-          eventDistribution[evt.event_id] = (eventDistribution[evt.event_id] || 0) + evt.count
-        })
-      })
+      const eventDistribution = eventDist
 
       // 计算系统健康度
       const totalAnomalies = result.total_anomalies || anomalyBlocks
@@ -1117,7 +993,7 @@ async function sendMessage() {
                   applyModelSwitch(inner.model)
                   continue
                 }
-              } catch (_) {}
+              } catch (_) { }
 
               const lastMsg = chatMessages.value[chatMessages.value.length - 1]
               if (lastMsg && lastMsg.role === 'assistant') {
@@ -1125,7 +1001,7 @@ async function sendMessage() {
               }
               nextTick(() => scrollToBottom())
             }
-          } catch (e) {}
+          } catch (e) { }
         }
       }
     }
@@ -1211,147 +1087,6 @@ async function handleImageUpload(event) {
   event.target.value = ''
 }
 
-function initSpeechRecognition() {
-  if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-    return null
-  }
-
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
-  const recognizer = new SpeechRecognition()
-  recognizer.continuous = false
-  recognizer.interimResults = true
-  recognizer.lang = 'zh-CN'
-
-  return recognizer
-}
-
-function toggleVoiceInput() {
-  if (isRecording.value) {
-    if (recognition) {
-      recognition.stop()
-    }
-    isRecording.value = false
-    return
-  }
-
-  if (!recognition) {
-    recognition = initSpeechRecognition()
-    if (!recognition) {
-      chatMessages.value.push({
-        role: 'assistant',
-        content: '抱歉，您的浏览器不支持语音识别功能。请使用Chrome浏览器。'
-      })
-      return
-    }
-
-    recognition.onstart = () => {
-      isRecording.value = true
-      chatMessages.value.push({
-        role: 'assistant',
-        content: '🎤 正在聆听，请说话...'
-      })
-    }
-
-    recognition.onresult = (event) => {
-      const transcript = Array.from(event.results)
-        .map(result => result[0].transcript)
-        .join('')
-
-      const lastMsg = chatMessages.value[chatMessages.value.length - 1]
-      if (lastMsg && lastMsg.content.includes('聆听')) {
-        lastMsg.content = `🎤 识别中：${transcript}`
-      } else {
-        chatMessages.value.push({
-          role: 'assistant',
-          content: `🎤 识别中：${transcript}`
-        })
-      }
-    }
-
-    recognition.onerror = (event) => {
-      isRecording.value = false
-      chatMessages.value.push({
-        role: 'assistant',
-        content: `语音识别出错：${event.error}`
-      })
-    }
-
-    recognition.onend = () => {
-      isRecording.value = false
-    }
-  }
-
-  try {
-    recognition.start()
-  } catch (e) {
-    console.error('语音识别启动失败:', e)
-  }
-}
-
-function speakLastResponse() {
-  if (!lastResponse.value || isSpeaking.value) return
-
-  if (!synthesis) {
-    synthesis = window.speechSynthesis
-  }
-
-  if (!synthesis) {
-    chatMessages.value.push({
-      role: 'assistant',
-      content: '抱歉，您的浏览器不支持语音播报功能。'
-    })
-    return
-}
-
-  synthesis.cancel()
-
-  const utterance = new SpeechSynthesisUtterance(lastResponse.value)
-  utterance.lang = 'zh-CN'
-  utterance.rate = 1.0
-  utterance.pitch = 1.0
-
-  utterance.onstart = () => {
-    isSpeaking.value = true
-  }
-
-  utterance.onend = () => {
-    isSpeaking.value = false
-  }
-
-  utterance.onerror = () => {
-    isSpeaking.value = false
-  }
-
-  synthesis.speak(utterance)
-}
-
-function handleRealtimeChange(val) {
-  if (val) {
-    realtimeTimer = setInterval(async () => {
-      if (isFetching) {
-        console.log('上次请求还未完成，跳过本次')
-        return
-      }
-      isFetching = true
-      try {
-        await fetchRealtimeAnomalies()
-        updateCharts()
-      } catch (e) {
-        console.error('实时刷新失败:', e)
-      } finally {
-        isFetching = false
-      }
-    }, 3000)
-    ElMessage.success('实时模式已开启，每3秒刷新一次')
-  } else {
-    if (realtimeTimer) {
-      clearInterval(realtimeTimer)
-      realtimeTimer = null
-    }
-    ElMessage.info('实时模式已关闭')
-  }
-}
-
 async function handleUploadSuccess(response) {
   ElMessage.success(response.message || '文件上传成功')
   systemLogs.value.unshift({
@@ -1375,7 +1110,7 @@ async function exportAnomalies() {
     const url = window.URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `anomalies_${new Date().toISOString().slice(0,10)}.csv`
+    a.download = `anomalies_${new Date().toISOString().slice(0, 10)}.csv`
     a.click()
     window.URL.revokeObjectURL(url)
 
@@ -1407,8 +1142,19 @@ onMounted(() => {
     }
     refreshData()
   })
-  // 获取可用模型列表
   fetchModels()
+
+  // 每10秒检测服务状态，运行中则开启5秒数据刷新
+  checkServiceStatus()
+  statusTimer = setInterval(checkServiceStatus, 30000)
+})
+
+onBeforeUnmount(() => {
+  stopDataRefresh()
+  if (statusTimer) {
+    clearInterval(statusTimer)
+    realtimeTimer = null
+  }
 })
 
 async function fetchModels() {
@@ -1438,17 +1184,19 @@ function updateCharts() {
         endAngle: 0,
         min: 0,
         max: 100,
+        radius: '70%',
+        center: ['50%', '60%'],
         itemStyle: { color: '#58D9F9' },
-        progress: { show: true, width: 30 },
+        progress: { show: true, width: 20 },
         pointer: { show: false },
-        axisLine: { lineStyle: { width: 30 } },
+        axisLine: { lineStyle: { width: 20 } },
         axisTick: { show: false },
         splitLine: { show: false },
         axisLabel: { show: false },
         detail: {
           valueAnimation: true,
-          fontSize: 36,
-          offsetCenter: [0, '40%'],
+          fontSize: 28,
+          offsetCenter: [0, '45%'],
           formatter: '{value}%',
           color: '#58D9F9'
         },
@@ -1515,13 +1263,14 @@ function updateCharts() {
   animation: marquee 20s linear infinite;
 }
 
-.marquee-paused {
-  animation-play-state: paused;
-}
-
 @keyframes marquee {
-  0% { transform: translateX(0); }
-  100% { transform: translateX(-50%); }
+  0% {
+    transform: translateX(0);
+  }
+
+  100% {
+    transform: translateX(-50%);
+  }
 }
 
 .log-item {
@@ -1543,21 +1292,31 @@ function updateCharts() {
 }
 
 .main-content {
-  padding: 20px;
+  padding: 16px 20px;
   height: calc(100vh - 60px);
   overflow-y: auto;
 }
 
 .dashboard-row {
-  height: 100%;
+  align-items: stretch;
+}
+
+.dashboard-row>.el-col:first-child {
+  position: sticky;
+  top: 16px;
+  align-self: flex-start;
+  height: calc(100vh - 60px - 32px);
+  display: flex;
+  overflow: hidden;
 }
 
 .chat-card {
-  height: calc(100vh - 140px);
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  flex: 1;
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .chat-card :deep(.el-card__body) {
@@ -1581,11 +1340,11 @@ function updateCharts() {
   align-items: center;
   margin-top: 8px;
   padding-top: 8px;
-  border-top: 1px solid rgba(255,255,255,0.15);
+  border-top: 1px solid rgba(255, 255, 255, 0.15);
 }
 
 .sub-label {
-  color: rgba(255,255,255,0.7);
+  color: rgba(255, 255, 255, 0.7);
   font-size: 12px;
   margin-right: 4px;
 }
@@ -1596,17 +1355,18 @@ function updateCharts() {
 }
 
 .chat-messages {
-  flex: 1;
+  flex: 1 1 0;
+  min-height: 0;
   overflow-y: auto;
-  padding: 15px;
+  padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 15px;
+  gap: 10px;
 }
 
 .message {
   display: flex;
-  max-width: 85%;
+  max-width: 92%;
 }
 
 .message.user {
@@ -1618,91 +1378,128 @@ function updateCharts() {
 }
 
 .message-content {
-  padding: 12px 16px;
-  border-radius: 12px;
-  line-height: 1.6;
-  font-size: 14px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  line-height: 1.7;
+  font-size: 13.5px;
+  word-break: break-word;
 }
 
 .message-content h1,
 .message-content h2,
 .message-content h3 {
-  margin: 12px 0 8px;
+  margin: 10px 0 6px;
   color: #58D9F9;
   font-weight: 600;
 }
 
-.message-content h1 { font-size: 18px; }
-.message-content h2 { font-size: 16px; }
-.message-content h3 { font-size: 15px; }
+.message-content h1 {
+  font-size: 16px;
+}
+
+.message-content h2 {
+  font-size: 15px;
+}
+
+.message-content h3 {
+  font-size: 14px;
+}
 
 .message-content p {
-  margin: 8px 0;
+  margin: 6px 0;
 }
 
 .message-content ul,
 .message-content ol {
-  margin: 8px 0;
-  padding-left: 20px;
+  margin: 6px 0;
+  padding-left: 18px;
 }
 
 .message-content li {
-  margin: 4px 0;
+  margin: 3px 0;
 }
 
 .message-content code {
-  background: rgba(0, 0, 0, 0.3);
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-family: 'Consolas', monospace;
-  font-size: 13px;
+  background: rgba(0, 0, 0, 0.35);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 12.5px;
   color: #FF6B6B;
 }
 
 .message-content pre {
-  background: rgba(0, 0, 0, 0.4);
-  padding: 12px;
-  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.45);
+  padding: 10px 12px;
+  border-radius: 6px;
   overflow-x: auto;
-  margin: 10px 0;
+  margin: 8px 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .message-content pre code {
   background: none;
   padding: 0;
   color: #A8E6CF;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .message-content table {
   width: 100%;
   border-collapse: collapse;
-  margin: 10px 0;
+  margin: 8px 0;
+  font-size: 12.5px;
 }
 
 .message-content th,
 .message-content td {
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  padding: 6px 10px;
   text-align: left;
 }
 
 .message-content th {
-  background: rgba(88, 217, 249, 0.2);
+  background: rgba(88, 217, 249, 0.15);
   color: #58D9F9;
+  font-weight: 600;
+}
+
+.message-content tr:hover {
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .message-content hr {
   border: none;
-  border-top: 1px solid rgba(255, 255, 255, 0.2);
-  margin: 16px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.15);
+  margin: 12px 0;
 }
 
 .message-content strong {
   color: #FFEAA7;
+  font-weight: 600;
 }
 
 .message-content em {
   color: #81ECEC;
+  font-style: italic;
+}
+
+.message-content blockquote {
+  border-left: 3px solid #58D9F9;
+  padding: 4px 12px;
+  margin: 8px 0;
+  background: rgba(88, 217, 249, 0.05);
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.message-content a {
+  color: #58D9F9;
+  text-decoration: none;
+}
+
+.message-content a:hover {
+  text-decoration: underline;
 }
 
 .message.user .message-content {
@@ -1735,8 +1532,16 @@ function updateCharts() {
 }
 
 @keyframes blink {
-  0%, 60%, 100% { opacity: 0.3; }
-  30% { opacity: 1; }
+
+  0%,
+  60%,
+  100% {
+    opacity: 0.3;
+  }
+
+  30% {
+    opacity: 1;
+  }
 }
 
 .chat-input {
@@ -1776,11 +1581,6 @@ function updateCharts() {
   background-color: rgba(255, 255, 255, 0.3);
 }
 
-.voice-active {
-  background: #ff6b6b !important;
-  border-color: #ff6b6b !important;
-  color: #fff !important;
-}
 
 .message-content img {
   max-width: 200px;
@@ -1800,6 +1600,7 @@ function updateCharts() {
 
 .chart-container {
   height: 250px;
+  overflow: hidden;
 }
 
 .stat-card {
@@ -1868,5 +1669,50 @@ function updateCharts() {
 
 :deep(.el-switch__label) {
   color: #fff;
+}
+
+/* 全局滚动条样式 */
+.main-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.main-content::-webkit-scrollbar-track {
+  background: rgb(17, 47, 86);
+  border-radius: 3px;
+}
+
+.main-content::-webkit-scrollbar-thumb {
+  background: rgba(88, 217, 249, 0.4);
+  border-radius: 3px;
+}
+
+.main-content::-webkit-scrollbar-thumb:hover {
+  background: rgba(88, 217, 249, 0.6);
+}
+
+/* 聊天框内部滚动条样式 */
+.chat-messages::-webkit-scrollbar {
+  width: 5px;
+}
+
+.chat-messages::-webkit-scrollbar-track {
+  background: rgb(17, 47, 86);
+  border-radius: 3px;
+}
+
+.chat-messages::-webkit-scrollbar-thumb {
+  background: rgba(88, 217, 249, 0.35);
+  border-radius: 3px;
+}
+
+.chat-messages::-webkit-scrollbar-thumb:hover {
+  background: rgba(88, 217, 249, 0.55);
+}
+
+/* Firefox 滚动条 */
+.main-content,
+.chat-messages {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(88, 217, 249, 0.4) rgb(17, 47, 86);
 }
 </style>

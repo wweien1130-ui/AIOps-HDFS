@@ -1,6 +1,7 @@
 import sys
 import os
 import json
+import logging
 
 # sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -19,6 +20,13 @@ from api.routers.openclaw_chat import router as openclaw_router
 HDFS_BASE_DIR = get_abs_path("New_Mlp")
 
 app = FastAPI(title="AI Application API", version="1.0.0")
+
+# 屏蔽 /api/realtime/status 的访问日志（高频轮询会刷屏）
+class StatusEndpointFilter(logging.Filter):
+    def filter(self, record):
+        return "/api/realtime/status" not in record.getMessage()
+
+logging.getLogger("uvicorn.access").addFilter(StatusEndpointFilter())
 
 app.add_middleware(
     CORSMiddleware,
@@ -182,21 +190,22 @@ async def analyze_logs(request: AnalyzeRequest):
         anomaly_count = len(anomalies_df)
         anomaly_ratio = anomaly_count / total_blocks if total_blocks > 0 else 0
 
-        # 计算E事件分布（从block_event_stats表）
+        # 计算E事件分布（按包含该事件的去重Block数统计）
         event_query = """
         SELECT
             event_id,
-            SUM(cnt) as total_count
+            COUNT(DISTINCT block_id) as block_count
         FROM online.block_event_stats
+        WHERE cnt > 0
         GROUP BY event_id
-        ORDER BY total_count DESC
+        ORDER BY block_count DESC
         """
         event_df = client.query_df(event_query)
 
         event_distribution = {}
         if not event_df.empty:
             for _, row in event_df.iterrows():
-                event_distribution[row['event_id']] = int(row['total_count'])
+                event_distribution[row['event_id']] = int(row['block_count'])
 
         # 构建Top 10异常Block数据
         top_anomalies = []
@@ -520,6 +529,23 @@ async def upload_log_file(file: UploadFile = File(...)):
 #         raise HTTPException(status_code=500, detail=f"查询失败: {str(e)}")
 
 
+@app.get("/api/realtime/status")
+async def get_realtime_status():
+    """检测在线监控服务是否在运行"""
+    import psutil
+    scripts = ['predictor.py', 'watch_folder.py']
+    running = []
+    for proc in psutil.process_iter(['pid', 'cmdline']):
+        try:
+            cmdline = proc.info.get('cmdline') or []
+            cmdline_str = ' '.join(cmdline)
+            if any(s in cmdline_str for s in scripts) and 'python' in cmdline_str.lower():
+                running.append(proc.info['pid'])
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+    return {"online": len(running) > 0, "pids": running}
+
+
 @app.get("/api/realtime/total")
 async def get_total_blocks():
     """
@@ -711,22 +737,22 @@ async def query_anomalies(
         """
         anomalies_df = client.query_df(query)
 
-        # 查询事件分布统计
+        # 查询事件分布统计（按包含该事件的去重Block数）
         event_query = f"""
         SELECT
             event_id,
-            sum(cnt) as total_count
+            COUNT(DISTINCT block_id) as block_count
         FROM {ch_config['database']}.block_event_stats
-        WHERE last_updated >= now() - INTERVAL 1 HOUR
+        WHERE cnt > 0
         GROUP BY event_id
-        ORDER BY total_count DESC
+        ORDER BY block_count DESC
         """
         event_df = client.query_df(event_query)
 
         event_distribution = {}
         if not event_df.empty:
             for _, row in event_df.iterrows():
-                event_distribution[row['event_id']] = int(row['total_count'])
+                event_distribution[row['event_id']] = int(row['block_count'])
 
         # 多样化筛选：按主导事件类型分组，轮询选取
         event_cols = [f'E{i}' for i in range(1, 30)]
@@ -821,28 +847,20 @@ async def get_realtime_anomalies(limit: int = 10, hours: int = None):
             password=ch_config.get('password', '')
         )
 
-        # 1. 事件分布统计（从block_event_stats表）
-        if hours:
-            event_query = f"""
-            SELECT event_id, sum(cnt) as total_count
-            FROM {ch_config['database']}.block_event_stats
-            WHERE last_updated >= now() - INTERVAL {hours} HOUR
-            GROUP BY event_id
-            ORDER BY total_count DESC
-            """
-        else:
-            event_query = f"""
-            SELECT event_id, sum(cnt) as total_count
-            FROM {ch_config['database']}.block_event_stats
-            GROUP BY event_id
-            ORDER BY total_count DESC
-            """
+        # 1. 事件分布统计（按包含该事件的去重Block数）
+        event_query = f"""
+        SELECT event_id, COUNT(DISTINCT block_id) as block_count
+        FROM {ch_config['database']}.block_event_stats
+        WHERE cnt > 0
+        GROUP BY event_id
+        ORDER BY block_count DESC
+        """
 
         event_df = client.query_df(event_query)
         event_distribution = {}
         if not event_df.empty:
             for _, row in event_df.iterrows():
-                event_distribution[row['event_id']] = int(row['total_count'])
+                event_distribution[row['event_id']] = int(row['block_count'])
 
         # 2. 查询异常总数
         time_filter = ""
@@ -918,9 +936,21 @@ async def get_realtime_anomalies(limit: int = 10, hours: int = None):
             if not added:
                 break
 
+        # 4. 查询总日志数和去重Block数
+        stats = client.query(f"""
+            SELECT
+                (SELECT count() FROM {ch_config['database']}.hdfs_logs) as total_logs,
+                (SELECT count(DISTINCT block_id) FROM {ch_config['database']}.block_event_stats) as total_blocks
+        """)
+        total_logs = int(stats.result_rows[0][0]) if stats.result_rows else 0
+        total_blocks = int(stats.result_rows[0][1]) if stats.result_rows else 0
+
         return {
             "anomalies": diverse_results,
             "total_anomalies": total_anomalies,
+            "total_logs": total_logs,
+            "total_blocks": total_blocks,
+            "anomaly_blocks": total_anomalies,
             "event_distribution": event_distribution
         }
 
